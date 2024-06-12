@@ -1,0 +1,153 @@
+Const NUMBER_OF_STATIONS As Long = 5
+Const ID_45175 As String = "45175"
+Const ID_45175A As String = "45175A"
+Const ID_45023 As String = "45023"
+Const ID_45025 As String = "45025"
+Const ID_45216 As String = "45216"
+
+'assume a station has no "extra" sensors then add them later based on ID
+Dim HAS_ADCP As Boolean = False
+Dim HAS_TSTRING As Boolean = False
+Dim HAS_SONDE As Boolean = False
+
+'Say Hello
+Select Case StationNumber
+Case ID_45175
+  print("Hello from " & ID_45175 & "!")
+Case ID_45175A
+  print("Hello from " & ID_45175A & "!")
+Case ID_45023
+  print("Hello from " & ID_45023 & "!")
+Case ID_45025
+  print("Hello from " & ID_45025 & "!")
+Case ID_45216
+  print("Hello from " & ID_45216 & "!")
+Case Else
+  print("Hello: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+'Establish equipment
+Select Case StationNumber
+Case ID_45175
+  HAS_ADCP = True
+Case ID_45175A
+  HAS_ADCP = True
+Case ID_45023
+  HAS_ADCP=True : HAS_TSTRING = True
+Case ID_45025
+  HAS_TSTRING = True
+Case ID_45216
+  HAS_TSTRING = True : HAS_SONDE = True
+Case Else
+  print("Equipment: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+'Set a description
+Select Case StationNumber
+Case ID_45175
+  StationDescription="Straits West"
+Case ID_45175A
+  StationDescription="Enbridge Spare"
+Case ID_45023
+  StationDescription="North Entry"
+Case ID_45025
+  StationDescription="South Entry"
+Case ID_45216
+  StationDescription="Ontonagon Buoy"
+Case Else
+  print("Description: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+'Set numberof Temp String Nodes
+_numberOfTempStringNodes = 0
+Select Case StationNumber
+Case ID_45023 OR ID_45025
+  _numberOfTempStringNodes=10
+Case ID_45216
+  _numberOfTempStringNodes=15
+Case Else
+  print("TS Node Count: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+Public TempStringDepths(TS210_MAX_NUMBER_OF_NODES) As Float = 0
+
+Select Case StationNumber
+Case ID_45175 OR ID_45175A
+  print("Station Configured without temp string")
+Case ID_45023 OR ID_45025
+  TempStringDepths(1) = 2.4
+  TempStringDepths(2) = 4
+  TempStringDepths(3) = 5.6
+  TempStringDepths(4) = 7.2
+  TempStringDepths(5) = 8.8
+  TempStringDepths(6) = 10.4
+  TempStringDepths(7) = 12
+  TempStringDepths(8) = 13.6
+  TempStringDepths(9) = 15.2
+  print("Nine temp string depths assigned")
+Case ID_45216
+  TempStringDepths(1) = 2.4
+  TempStringDepths(2) = 4
+  TempStringDepths(3) = 5.6
+  TempStringDepths(4) = 7.2
+  TempStringDepths(5) = 8.8
+  TempStringDepths(6) = 10.4
+  TempStringDepths(7) = 12
+  TempStringDepths(8) = 13.6
+  TempStringDepths(9) = 15.2
+  TempStringDepths(10) = 16.8
+  TempStringDepths(11) = 18.4
+  TempStringDepths(12) = 20
+  TempStringDepths(13) = 21.6
+  TempStringDepths(14) = 23.2
+  print("14 temp string depths assigned")
+Case Else
+  print("TS Depths: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+'Set location
+Select Case StationNumber
+Case ID_45175
+  PermittedLongitude = -84.771515 : PermittedLatitude = 45.82519
+Case ID_45175A
+  PermittedLongitude = -84.771515 : PermittedLatitude = 45.82519
+Case ID_45023
+  PermittedLongitude = -88.604383 : PermittedLatitude = 47.26745
+Case ID_45025
+  PermittedLongitude = -88.395741 : PermittedLatitude = 46.96931
+Case ID_45216
+  PermittedLongitude = -89.349451 : PermittedLatitude = 46.93170
+  
+Case Else
+  print("Location: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+'Set elevation
+Select Case StationNumber
+Case ID_45175
+  StationElevation = 176.72
+Case ID_45175A
+  StationElevation = 176.72
+Case ID_45023
+  StationElevation = 184.74
+Case ID_45025
+  StationElevation = 184.74
+Case ID_45216
+  StationElevation = 184.74
+Case Else
+  print("Elevation: Unknown Station Number encountered")
+  print("This should never happen and needs to be fixed")
+EndSelect
+
+If DebugMode Then
+  Print("Debug Mode Set. Permitted location is at the GLRC")
+  PermittedLongitude = -88.546005 : PermittedLatitude = 47.120638
+  StationElevation = 186.0
+EndIf
+

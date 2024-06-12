@@ -1,0 +1,36 @@
+Dim _index As Long = 0
+IWSString = ""
+IWSStringLength = 0
+
+'"$PSVSW,263.92,0.002,6.318,6.266,4.477,7.540,4.340,11.182,3.529,5.742,7.417,0.003,0.002,5.043,0.112,-0.108,2.883,-0.852,0.196,0.726,0.078,0.078,-0.136,0.146,130,0.094,21,9.831,70,45023,2022-04-08 14:15:39,133*68"
+Do While (SerialInChk(SVS603_PORT) > 0)
+
+  SerialInRecord (SVS603_PORT,IWSString,36,0,&H0D0A,IWSBytesReturned,01) 'maybe 10/13 for begin/end. 36 is a dollar sign
+
+'IWSString = "$PSVSW,327.13,0.003,6.352,6.311,5.164,8.700,5.126,153.333,136.377,359.023,153.772,0.004,0.004,5.581,0.166,0.870,0.208,-0.137,0.515,-0.523,0.247,-0.216,-0.098,0.775,1718,0.718,1192,11.100,1718,45175A,2024-03-20 13:23:19,2047*05"
+
+  'SerialIn(IWSString, ComC5, 100, CHR(13), 1024) 'using the termination character textually includes it in the destination variable
+  'SerialIn(IWSString, ComC5, 100, 13, 1024) 'using the termination character numerically EX-cludes it from the destination variable
+
+  IWSStringLength = Len(IWSString)
+  SplitStr(IWSStrings(),IWSString,",",33,5)
+
+  IWSNMEA = Left(IWSString, InStr(1,IWSString,",",3)-1)
+  For _index = 2 To 31
+    IWSData(_index) = IWSStrings(_index)
+  Next _index
+
+  IWSIndex = Left(IWSStrings(33),InStr(1,IWSStrings(33),"*",3)-1)
+  IWSChecksum = HexToDec(Right(IWSStrings(33),2))
+  IWSDateTime = IWSStrings(32)'Mid(IWSString, InStr(1,IWSString,StationNumber,2)+6, InStr(1,IWSString,",",10) - (InStr(1,IWSString,StationNumber,2)+6))
+
+  If (IWSIndex = 2047) Then 'the index after 1024 seconds of 2Hz sampling; the NOAA standard
+    IWSDataReady = true
+    Print("IWS index = 2047. Fresh data is ready.")
+    SerialFlush(SVS603_PORT)
+  EndIf
+Loop
+
+Print(IWSString)
+'SerialFlush(SVS603_PORT)
+

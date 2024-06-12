@@ -1,0 +1,917 @@
+Public CompileNotes As String * 320 = "6/7/24(b) Deployment image"
+SequentialMode
+SetStatus("UsrDriveSize", 996693)
+
+'*****
+Const DEBUG = false '***** Set to True if logger is under test or not deployed. Prevents uploads
+'*****
+
+Const StationNumber = Settings.StationName
+
+Include "CPU:Init.CR1X" 'load the constants
+
+Const BUOY_HISTORY_SIZE As Long = 32
+Dim BUOY(BUOY_HISTORY_SIZE) As String * 256 = ""
+
+Public DriftDistance As Long = 0
+Public DirftDirection As Float = 0
+Units DriftDistance = m
+Units DirftDirection = degrees
+
+'The StationDescription is established in Identity.CR1x
+Dim StationDescription As String * 32 = "not set"
+
+Const SCAN_INTERVAL  = 10  'seconds
+Const UPLOAD_INTERVAL = 20 'minutes
+Const MET_INTERVAL = 10 'seconds
+Const SONDE_INTERVAL = 30 'minutes
+Const CAMERA_INTERVAL = 60 'minutes
+
+Const GMX501_PORT = C1
+Const EXO3S_PORT = C1
+
+Const SVS603_PORT = ComC3
+Const SVS603_BAUD = 9600
+
+Const ADCP_COM_PORT = ComC5
+Const ADCP_BAUD As Long = 9600
+
+Const TS210_PORT = ComC7
+Const TS210_BAUD = 19200
+'TODO use conditional compliation or some other technique
+'to set the temp string number of nodes to 1, 10 or 15
+Const TS210_MAX_NUMBER_OF_NODES As Long = 15
+
+Const CAMERA_COM_PORT As Long = ComRS232
+Const CAMERA_BAUD_RATE As Long = 115200
+
+Const GMX501_ADDR = "0"
+Const EXO3S_ADDR = "1"
+
+Const SONDE_POWER = SW12_1
+Const CAMERA_POWER = SW12_2
+
+Const TIMER_NEW = 2
+Const TIMER_LAP = 4
+Const MINICO2_STARTUP_TIMER As Long = 1
+'Const SONDE_MEASURMENT_TIMER As Long = 2
+Const ADCP_READ_TIMER As Long = 3
+Const CAMERA_XFER_TIMER As Long = 4
+
+
+'======================= D I A G N O S T I C S =============================
+Public DiagString As String * 128
+Public PanelVoltage As Float = 0.0 : Units PanelVoltage = V
+Public PanelTemperature As Float = 0.0 : Units PanelTemperature = C
+Public BatteryTemperature As Float = 0.0 : Units BatteryTemperature = F
+Public GPSLock As Boolean = false
+Public NetworkLatency As Float      'For checking connectivity to ftp upload sites
+Units NetworkLatency = ms
+Public IPAddress As String * 32 'to hold the IP address of the modem's interface to the wide open internet
+Public CellularRSRP As Long        'Cell signal strength
+Public CellularRSRQ As Long        'Cell signal quality
+Public SkippedScans As String * 16
+Public GMX501Info As String *24
+Public EXO3SInfo As String * 24
+Public EXO3SCommand As String * 24
+Public SVS603Info As String * 32
+Public CameraInfo As String * 32
+
+'array declaration Flags array to enable/disable various sensor processing
+Public Flag(8) As Boolean = {DEBUG, 'debug
+ENABLED,'diagemail
+ENABLED,'MET
+ENABLED,'WarningEmail
+ENABLED,
+ENABLED,'camera
+ENABLED,'sonde
+DISABLED}'disable wave height warning
+
+Alias Flag(1) = DebugMode    'True if logger is not deployed
+Alias Flag(2) = DiagnosticEmail
+Alias Flag(3) = MET
+Alias Flag(4) = WarningEmail
+Alias Flag(5) = FLAG5
+Alias Flag(6) = CAMERA
+Alias Flag(7) = SONDE
+Alias Flag(8) = DisableWaveHeightWarning
+
+Public UploadGLOS As Long = -906
+Public UploadNDBC As Long = -906
+Public UploadMTU As Long = -906
+Public UploadGLRC As Long = -906
+Public UploadFailures As Long = 0
+Public UploadFileName As String * 128
+
+'TODO - send GLOS a link to the image on our "server"
+'Public UploadImageGLOS As Long = -906
+Public UploadImageGLRC As Long = -906
+Dim UploadImageFileName As String * 128
+
+Public GPSCoordinate As String * 64
+
+'========================== G M X 5 0 1 ====================================
+Dim _GMX501(26) As Float
+Dim GMX501(23) As Float
+Alias GMX501(1)  = RelativeWindDirection    'aM!
+Alias GMX501(2)  = RelativeWindSpeed
+Alias GMX501(3)  = WindDirection
+Alias GMX501(4)  = WindSpeed
+Alias GMX501(5)  = GMXStatus
+
+Alias GMX501(6)  = AirTemperature  'aM1!
+Alias GMX501(7)  = RelativeHumidity
+Alias GMX501(8)  = Dewpoint
+Alias GMX501(9)  = BarometricPressure
+'Alias GMX501(10) = GMXStatus2
+Alias GMX501(10) = WindChill
+Alias GMX501(11) = HeatIndex
+Alias GMX501(12) = AirDensity 'wtf is this???
+Alias GMX501(13) = WetBulbTemp
+
+Alias GMX501(14) = SolarRadiation  'aM4!
+Alias GMX501(15) = SunshineHours
+Alias GMX501(16) = XOrientation
+Alias GMX501(17) = YOrientation
+Alias GMX501(18) = ZOrientation
+'Alias GMX501(20) = GMXStatus3
+
+Alias GMX501(19) = LatitudeDegrees 'aM5!
+Alias GMX501(20) = LatitudeMinutes
+Alias GMX501(21) = LongitudeDegrees
+Alias GMX501(22) = LongitudeMinutes
+Alias GMX501(23) = Altitude
+'Alias GMX501(26) = GMXStatus4
+
+Units WindDirection = degrees
+Units WindSpeed = m/s
+'Units status = bitmap
+Units AirTemperature = C
+Units RelativeHumidity = %
+Units Dewpoint = C
+Units BarometricPressure = hPa
+Units LatitudeDegrees = degrees
+Units LatitudeMinutes = minutes
+Units LongitudeDegrees = degrees
+Units LongitudeMinutes = minutes
+Units Altitude = m
+
+'============================ E X O 3 S ====================================
+'parameter list
+'Temp (°C)
+'Cond (µS/cm)
+'Sp Cond (µS/cm)
+'pH
+'Wiper Position (volt)
+'fDOM (RFU)
+'fDOM (QSU)
+'Date (dd_mm_yy)
+'Chlorophyll (µg/L)
+'Chlorophyll (RFU)
+'Phycocyanin (RFU)
+'Chlorophyll (cells/mL)
+'Phycocyanin (cells/mL)
+'Phycocyanin (µg/L)
+'Wiper Peak Current
+'Sonde Cable Power (volt)
+
+Public _EXO3S(16) As Float
+Dim EXO3S(16) As Float
+Alias EXO3S(1) = EXOTemp
+Alias EXO3S(2) = Conductivity
+Alias EXO3S(3) = SpecificConductivity
+Alias EXO3S(4) = pH
+Alias EXO3S(5) = WiperPosition
+Alias EXO3S(6) = fDOM_RFU
+Alias EXO3S(7) = fDOM_QSU
+Alias EXO3S(8) = EXODate
+Alias EXO3S(9) = Chlorophyll_ugL
+Alias EXO3S(10) = Chlorophyll_RFU
+Alias EXO3S(11) = Phycocyanin_RFU
+Alias EXO3S(12) = Chlorophyll_Cells
+Alias EXO3S(13) = Phycocyanin_Cells
+Alias EXO3S(14) = Phycocyanin_ugL
+Alias EXO3S(15) = WiperPeakCurrent
+Alias EXO3S(16) = EXOVoltage
+
+Units EXOTemp = C
+Units Conductivity = uS/cm
+Units SpecificConductivity = uS/cm
+Units WiperPosition = Volts
+Units fDOM_RFU = RFU
+Units fDOM_QSU = QSU
+Units Chlorophyll_ugL = ug/L
+Units Chlorophyll_RFU = RFU
+Units Phycocyanin_RFU = RFU
+Units Chlorophyll_Cells = cells/mL
+Units Phycocyanin_Cells = cells/mL
+Units Phycocyanin_ugL = uG/L
+'Units WiperPeakCurrent
+Units EXOVoltage = Volts
+
+'=========================== M I N I C O 2 =================================
+Dim _MiniCO2(2)
+Dim MiniCO2(2)
+Alias MiniCO2(1) = TDGP
+Alias MiniCO2(2) = pCO2
+Units TDGP = mbar
+Units pCO2 = ppm
+
+'============================ S V S 6 0 3 ==================================
+Dim IWSDataReady As Boolean = false
+Public IWSString As String * 256
+Public IWSBytesReturned As Long = 0
+Public IWSStringLength As Long = 0
+
+Dim IWSStrings(33) As String
+Dim IWSData(33) As Float
+Public IWSNMEA As String * 16 = ""
+Alias IWSData(2) = StationHeading      'Heading
+Alias IWSData(3) = WaveHeight          '5 Hs Significant wave height
+Alias IWSData(4) = WavePeriod          '6 DominantPeriodFW = Dominant wave period (frequency windowing)
+Alias IWSData(5) = DomPeriodTW         'Dominant wave period (uses time domain windowing algorithm)
+Alias IWSData(6) = Tzc                  'Mean zero-crossing period
+Alias IWSData(7) = MaximumPeriod        'Max period encountered (sec)
+Alias IWSData(8) = AveragePeriod        '10 average period (sec)
+Alias IWSData(9) = WaveDirectionFW     '11 Direction of the dominant-period wave (frequency windowing)
+Alias IWSData(10) = WaveDirectionCF     'Direction of the dominant-period wave (check factor algorithm)
+Alias IWSData(11) = WaveDirectionTW     'Direction of the dominant-period wave (time domain windowing)
+Alias IWSData(12) = MeanWaveDir         '14 Energy-averaged wave direction
+Alias IWSData(13) = MaxWaveHeight      '15 Hmax = Maximum wave height
+Alias IWSData(14) = HOneTen            '16 Hmax2 = Height of the maximum 10%
+Alias IWSData(15) = WaveEnergyPeriod   '17 average Wave Energy Period
+Alias IWSData(16) = a1                 '18
+Alias IWSData(17) = b1                 '19
+Alias IWSData(18) = a2                 '20
+Alias IWSData(19) = b2                 '21
+Alias IWSData(20) = LangGN             'Noise model coefficient
+Alias IWSData(21) = DP1                  'diag param 1
+Alias IWSData(22) = DP2                  'diag param 2
+Alias IWSData(23) = maxAccX             '
+Alias IWSData(24) = maxAccXIndex        '
+Alias IWSData(25) = maxAccY             '
+Alias IWSData(26) = maxAccYIndex        '
+Alias IWSData(27) = maxAccZ             '
+Alias IWSData(28) = maxAccZIndex        '
+Alias IWSData(29) = RMSTilt             'Root mean square of the tilt angles
+Alias IWSData(30) = MaxTilt             'maximum tilt angle
+Alias IWSData(31) = IWSIdentity         '
+'Alias IWSStrings(32) = IWSDateTime     'placeholder for IWSDateTime; 603s non-numeric date time field
+Public IWSDateTime As String * 32 = ""
+Alias IWSData(32) = IWSIndex
+Alias IWSData(33) = IWSChecksum
+
+'============================= T S 2 1 0 ===================================
+
+Dim _numberOfTempStringNodes As Long = 0
+Dim _tempStringTemp(TS210_MAX_NUMBER_OF_NODES) As Float
+Dim TempStringTemp(TS210_MAX_NUMBER_OF_NODES) As Float
+
+'============================= V A R S =====================================
+Dim IN_STARTUP As Boolean = false
+Dim PermittedLatitude As Float = 0
+Dim PermittedLongitude As Float = 0
+Dim Longitude As Float = 0
+Dim Latitude As Float = 0
+Public LocationLink As String * 64 = "not set"
+'Distance station can drift off its location in meters
+'Make this public so it is adjustable in a running progrma
+Public DriftTolerance As Float = 250.0
+Public StationElevation As Float = 0.0
+Dim _elevationCorrection As Float = 0.0
+Dim _driftCounter As Long = 0
+Dim _lat2mMult As Float = 0
+Dim _lon2mMult As Float = 0
+
+Public WaterTemperature As Float = 0
+
+Units PermittedLatitude = degrees
+Units PermittedLongitude = degrees
+Units Latitude = degrees
+Units Longitude = degrees
+Units WaterTemperature = C
+Units CellularRSRP = dBm
+Units CellularRSRQ = ECIO
+
+Public EmailResult As String * 128
+Public DiagEmailResult As String * 128
+Public WarningEmailResult As String * 128
+
+Dim miniCO2StartupTimer As Float = 0.0
+
+Dim _LowVoltageMessageSent As Boolean = false
+Dim _warningMessage As String * 128
+
+
+'========================= D A T A T A B L E S =============================
+DataTable(BuoyMessages, True, BUOY_HISTORY_SIZE)
+  Sample(BUOY_HISTORY_SIZE,BUOY,String)
+EndTable
+
+DataTable(ConcurrentTable, True, -1)
+  Sample(1,IIF(WindDirection = NAN, 0, WindDirection),Long)
+  FieldNames("WindDirection:Wind Direction")
+  Sample(1,IIF(WindSpeed = NAN, 0, WindSpeed),Float)
+  FieldNames("WindSpeed:Wind Speed")
+  Sample(1,IIF(AirTemperature = NAN, 0, AirTemperature),Float)
+  FieldNames("AirTemperature:Air Temperature")
+  Sample(1,IIF(RelativeHumidity = NAN, 0, RelativeHumidity),Float)
+  FieldNames("RelativeHumidity: Realative Humidity")
+  Sample(1,IIF(Dewpoint = NAN, 0, Dewpoint),Float)
+  FieldNames("Dewpoint:Dewpoint")
+  Sample(1,IIF(BarometricPressure = NAN, 0, BarometricPressure),Float)
+  FieldNames("BarometricPressure:Barometric Pressure")
+  Sample(1,IIF(SolarRadiation = NAN, 0, SolarRadiation),Long)
+  FieldNames("SolarRadiation:Solar Radiation")
+  Sample(1,GPSLock,Boolean)
+  FieldNames("GPSLock:GPSLock")
+  Sample(1,IIF(Longitude = NAN, 0, Longitude) ,Float)
+  FieldNames("Longitude:Longitude")
+  Sample(1,IIF(Latitude = NAN, 0, Latitude),Float)
+  FieldNames("Latitude:Latitude")
+  Sample(1,IIF(DriftDistance = NAN, 0, DriftDistance),Float)
+  FieldNames("DriftDistance:Drift Distance")
+  Minimum(1,PanelVoltage,Float,false,false)
+  FieldNames("PanelVoltage:Panel Voltage")
+  Minimum(1,PanelTemperature,Float,false,false)
+  FieldNames("PanelTemperature:Panel Temperature")
+  Minimum(1,BatteryTemperature,Float,false,false)
+  FieldNames("BatteryTemperature:Battery Temperature")
+  Sample(1,WaterTemperature,Float)
+  FieldNames("WaterTeperature:Water Temperature")
+  Sample(1,IIF(Conductivity = NAN, 0, Conductivity),Float)
+  FieldNames("Conductivity:Conductivity")
+  Sample(1,IIF(pH = NAN, 0, pH),Float)
+  FieldNames("pH:pH")
+  Sample(1,IIF(fDOM_RFU = NAN, 0, fDOM_RFU),Float)
+  FieldNames("fDOM:fDOM RFU")
+  Sample(1,IIF(Chlorophyll_RFU = NAN, 0, Chlorophyll_RFU) ,Float)
+  FieldNames("Chlorophyll:Chlorophyll RFU")
+  Sample(1,IIF(Phycocyanin_RFU = NAN, 0, Phycocyanin_RFU),Float)
+  FieldNames("Phycocyanin:Phycocyanin RFU")
+  '  Sample(1,XOrientation,Float)
+  '  Sample(1,YOrientation,Float)
+  Sample(1,IIF(TDGP = NAN, 0, TDGP),Float)
+  FieldNames("TDGP:TDGP")
+  Sample(1,IIF(pCO2 = NAN, 0, pCO2),Float)
+  FieldNames("pCO2:pCO2")
+  Minimum(1,CellularRSRP,Float,False,False)
+  FieldNames("CellSignalStrength:Cellular Signal Strength")
+  Minimum(1,CellularRSRQ,Float,False,False)
+  FieldNames("CellSignalQuality:Cellular Signal Quality")
+  Sample(1,SkippedScans, String)
+  FieldNames("SkippedScans:Skipped Main Scans")
+  MQTTPublishTable(1,0,60,Sec,1)
+EndTable
+
+DataTable(METTable,True,-1)
+  DataInterval(0, MET_INTERVAL, Sec, 0)
+  WindVector(1,WindSpeed,WindDirection,Long,(WindSpeed=NAN OR WindDirection=NAN),0,0,0)
+  FieldNames("WindVector1:WV1,WindVector2:WV2,WindVector3:WV3")
+  Median (1,WindDirection,60,Long,WindDirection=NAN)
+  FieldNames("WindDirection:Wind Direction")
+  Average(1,WindSpeed,Float,WindSpeed=NAN)
+  FieldNames("WindSpeed:Wind Speed")
+  Average(1,AirTemperature,Float,AirTemperature=NAN)
+  FieldNames("AirTemperature:Air Temperature")
+  Average(1,RelativeHumidity,Float,RelativeHumidity=NAN)
+  FieldNames("RelativeHumidity:Relative Humidity")
+  Average(1,Dewpoint,Float,Dewpoint=NAN)
+  FieldNames("Dewpoint:Dewpoint")
+  Average(1,BarometricPressure,Long,BarometricPressure=NAN)
+  FieldNames("BarometricPressure:Barometric Pressure")
+  Average(1,SolarRadiation,Long,SolarRadiation=NAN)
+  FieldNames("SolarRadiation:Solar Radiation")
+  Average(1,Longitude,Float,Longitude=NAN OR Latitude=NAN)
+  FieldNames("Longitude:Longitude")
+  Average(1,Latitude,Float,Latitude=NAN OR Longitude=NAN)
+  FieldNames("Latitude:Latitude")
+EndTable
+
+DataTable (SVS603,True,-1) 'Set table size to # of records or -1 to autoallocate.
+  Sample (1,IWSString,String)
+  Sample (1,IWSData(1),String)
+  FieldNames("IWSNMEA:IWS NMEA prefix")
+  Sample (30,IWSData(2),Float)
+  Sample (1,IWSDateTime,String)
+  Sample (2,IWSData(32),Float)
+EndTable
+
+DataTable(SondeTable,True,-1)
+  DataInterval(0, SONDE_INTERVAL, Min, 0)
+  Average(1,WaterTemperature,Float,WaterTemperature=NAN)
+  FieldNames("WaterTemperature:Water Temperature")
+  Average(1,Conductivity,Float,Conductivity=NAN)
+  FieldNames("Conductivity:Conductivity")
+  Average(1,pH,Float,pH=NAN)
+  FieldNames("pH:pH")
+  Average(1,fDOM_RFU,Float,fDOM_RFU=NAN)
+  FieldNames("fDOM:fDOM RFU")
+
+  Average(1,Chlorophyll_RFU,Float,Chlorophyll_RFU=NAN)
+  FieldNames("Chlorophyll:Chlorophyll RFU")
+  Average(1,Chlorophyll_ugL,Float,Chlorophyll_ugL=NAN)
+  FieldNames("Chlorophyll_ugL:Chlorophyll ugL")
+
+  Average(1,Phycocyanin_RFU,Float,Phycocyanin_RFU=NAN)
+  FieldNames("Phycocyanin:Phycocyanin RFU")
+  Average(1,Phycocyanin_ugL,Float,Phycocyanin_ugL=NAN)
+  FieldNames("Phycocyanin_ugL:Phycocyanin ugL")
+
+  Average(1,TDGP,Float,TDGP=NAN)
+  FieldNames("TDGP:TDGP")
+  Average(1,pCO2,Float,pCO2=NAN)
+  FieldNames("pCO2:pCO2")
+EndTable
+
+DataTable (TempStringTable,True,-1) 'Set table size to # of records or -1 to autoallocate.
+  Average(TS210_MAX_NUMBER_OF_NODES,TempStringTemp,Float,TempStringTemp(1) = NAN)
+EndTable
+
+'===========================================================================
+Const CAMERA_READ_BUFFER_SIZE As Long = 65536'196608
+Dim cameraReadBuffer (CAMERA_READ_BUFFER_SIZE / 4 ) As Long 'divide buffer length in bytes by 4 (the size of Long)
+Const CAMERA_COM_PORT_BUFFER_SIZE As Long = CAMERA_READ_BUFFER_SIZE
+
+'==========>>>>> INCLUDES for Modules <<<<<==================
+Include "CPU:CameraProcessing.CR1x"  'Camera init
+Include "CPU:ADCPProcessing.CR1x" 'ADCP init
+Include "CPU:Subroutines.CR1x"
+'============================================================
+
+'note these will be in station time, UTC...
+Dim _realTime(9) As Long           'declare as public and dimension rTime to 9
+Alias _realTime(1) = Year          'assign the alias Year to rTime(1)
+Alias _realTime(2) = Month         'assign the alias Month to rTime(2)
+Alias _realTime(3) = DOM           'assign the alias DOM to rTime(3)
+Alias _realTime(4) = Hour          'assign the alias Hour to rTime(4)
+Alias _realTime(5) = Minute        'assign the alias Minute to rTime(5)
+Alias _realTime(6) = Second        'assign the alias Second to rTime(6)
+Alias _realTime(7) = uSecond       'assign the alias uSecond to rTime(7)
+Alias _realTime(8) = WeekDay       'assign the alias WeekDay to rTime(8)
+Alias _realTime(9) = DayofYear   'assign the alias Day_of_Year to rTime(9)
+Dim _timestamp As String *25
+Dim _record As Long
+
+'============================== M A I N ====================================
+'===========================================================================
+BeginProg
+  IN_STARTUP = true
+  Battery(PanelVoltage)
+  Sprintf(_warningMessage, "Buoy is starting up. VBAT=%.2f", PanelVoltage)
+  print(_warningMessage)
+
+  'sonde and camera instruments are only turned on when needed
+  SW12(SONDE_POWER, Off) 'SONDE
+  SW12(CAMERA_POWER, Off) 'CAMERA
+
+  Include "CPU:Identity.CR1x" 'this sets up the program with *who*, where and what instruments it is
+
+  SetStatus("Messages", "2024 MTU GLRC Station " & StationNumber & " " & AQ(StationDescription) & " Ver: " & Status.ProgSignature & " " & CompileNotes)
+  CompileNotes = Status.ProgSignature & IIF(DebugMode, " ***DEBUG*** ", " ") & CompileNotes
+
+  Print("Starting Up " & Status.Messages)
+  _lat2mMult = 40007863/360                  'meters/deg - Earth circumference around poles / 360
+  _lon2mMult = COS(PermittedLatitude*PI/180)*40075017/360  'meters/deg - Earth circumference around equator at latitude / 360
+
+  print("Initializing GMX501 on " & GMX501_PORT)
+  'in SDI12-land the port opens and sets itself up
+  SDI12Recorder(GMX501Info,GMX501_PORT,GMX501_ADDR,"I!",1,0,-1)
+
+  print("Initializing SVS603 on " & SVS603_PORT)
+  'Open IWS instrument comm channel
+  SerialOpen(SVS603_PORT,SVS603_BAUD,0,0,512)
+  SerialFlush(SVS603_PORT)
+  SerialOut(SVS603_PORT, CRLF, "", 0, 100)
+  Delay(1, 200, mSec)
+  SerialOut(SVS603_PORT, CRLF, "", 0, 100)
+  Delay(1, 200, mSec)
+  SerialOut(SVS603_PORT, "GET VERSION" & CRLF, "", 0, 100)
+  Delay(1, 200, mSec)
+  SVS603Info = ""
+  SerialIn(SVS603Info, SVS603_PORT, 100, 13, 1024)   'using the termination character numerically EX-cludes it from the destination variable
+  Delay(1, 200, mSec)
+  SerialOut(SVS603_PORT, CRLF & CRLF & "SET LOG 27" & CRLF, "", 0, 100)
+  Delay(1, 200, mSec)
+  SerialOut(SVS603_PORT, CRLF & CRLF & "SET IDENTITY " & StationNumber & CRLF, "", 0, 100)
+  SerialFlush(SVS603_PORT)
+
+  print("Initializing Camera...")
+  'Call GetCameraVersion
+  CameraInfo = cameraVersionCode(1)
+
+  If HAS_ADCP Then
+    print("Station has ADCP. Initializing port " & ADCP_COM_PORT)
+    SerialOpen (ADCP_COM_PORT,ADCP_BAUD,0,0,16384) 'Open Nortek Aquadopp Z-cell instrument comm channel
+    SerialFlush(ADCP_COM_PORT)                        'Flush aquadopp data from buffer
+  EndIf
+
+  If HAS_TSTRING Then
+    print("Station has temp string. Initializing port " & TS210_PORT)
+    'SerialOpen (TS210_PORT,TS210_BAUD,19,0,128,4)            'Open Nexsens temp string comms channel
+    SerialOpen(TS210_PORT,TS210_BAUD,0,0,128,4)            'Open Nexsens temp string comms channel
+    SerialFlush(TS210_PORT)
+  EndIf
+
+  Battery(PanelVoltage)
+  NetworkLatency = PingIP("ftp.mtri.org",750)
+
+  If NetworkLatency > 0 Then
+    'Email(DIAG_EMAIL_LIST, "Starting up", _warningMessage)
+    'SMS(DIAG_SMS_LIST, _warningMessage)
+  Else
+    NetworkLatency = PingIP("ftp.mtri.org",750)
+    If NetworkLatency > 0 Then
+      'Email(DIAG_EMAIL_LIST, "Starting up", _warningMessage)
+      'SMS(DIAG_SMS_LIST, _warningMessage)
+    EndIf
+  EndIf
+
+  IPAddress = IPInfo(1,0) 'get the IP address of the modem's interface to the wide open internet
+
+  'Calculate Sealevel Pressure from Station Pressure using formula from same document AND Station Elevation (+mast height)
+  _elevationCorrection = 1013.25*(1-(1-((StationElevation + 3.048)/44330.77))^5.256)
+  print("Elevation correction for MBSP is " & _elevationCorrection)
+  Print("Startup complete. Entering main scan", LineNum)
+
+  '=========================================================================
+  '=========================================================================
+  Scan (SCAN_INTERVAL,Sec,0,0)
+    IN_STARTUP = false
+    Battery(PanelVoltage)
+    PanelTemp(PanelTemperature, _60Hz)
+    TCDiff(BatteryTemperature,1,mv200C,1,TypeT,PanelTemperature,True,0,60,1.8,32)
+    RealTime(_realTime)
+
+    CallTable(ConcurrentTable)
+
+    '_timestamp = Public.Timestamp(1,1)
+
+    Sprintf(_timestamp, "%u/%u/%u %02u:%02u:%02u", Month, DOM, Year, Hour, Minute, Second)
+    'depending on the datatype of the LHS variable this assignment will put
+    'the number of seconds since Jan 1 19:90 00:00 into a Long, or a human readable date time into a String *25
+    _record = Public.Timestamp(1,1)
+
+  NextScan
+  '=========================================================================
+  '=========================================================================
+
+
+
+  ' Slow Sequence 1
+  '==================== U P L O A D  S E Q U E N C E =======================
+  SlowSequence
+  Scan(UPLOAD_INTERVAL,min, 1, 0)
+    If NOT IN_STARTUP Then
+
+
+      If ((PanelVoltage <= 9.5) AND NOT _LowVoltageMessageSent AND (PanelVoltage > 1.0)) Then
+        Sprintf(_warningMessage, "Voltage is below %.2f V and approaching automatic disconnect. Disabling IWS logging", PanelVoltage)
+        Email(IIF(NOT(DebugMode),WARNING_EMAIL_LIST,DIAG_EMAIL_LIST), "Low Voltage", _warningMessage)
+        Print(_warningMessage)
+        SerialOut(SVS603_PORT, "SET LOG 0"&CRLF, "", 0, 100)
+        Delay(1, 200, mSec)
+        SerialOut(SVS603_PORT, "SET LOG 0"&CRLF, "", 0, 100)
+        Delay(1, 200, mSec)
+        _LowVoltageMessageSent = True
+      EndIf
+
+      If ((PanelVoltage > 9.5) AND _LowVoltageMessageSent ) Then
+        Sprintf(_warningMessage, "%s Voltage is above %f.2 V. Disconnect avoided, for now", StationDescription, PanelVoltage)
+        Print(_warningMessage)
+        SerialOut(SVS603_PORT, "SET LOG 27"&CRLF, "", 0, 100)
+        Delay(1, 200, mSec)
+        SerialOut(SVS603_PORT, "SET LOG 27"&CRLF, "", 0, 100)
+        Delay(1, 200, mSec)
+        _LowVoltageMessageSent = False
+      EndIf
+
+      RealTime(_realTime)
+
+      Include "CPU:SVS603Processing.CR1x"
+      If IWSDataReady Then
+        CallTable SVS603
+        Print("IWS Has fresh data.")
+        IWSDataReady = false
+      Else
+        Print("IWS did not have fresh data.")
+      EndIf
+
+      If (WaveHeight > 2.1336) AND NOT(DisableWaveHeightWarning) Then
+        Sprintf(_warningMessage, "Wave heights have exceeded 7.0 feet. Currently %.2f feet.", (WaveHeight * 3.28084))
+        Email(DIAG_EMAIL_LIST, "Wave height warning", _warningMessage)
+        SMS(DIAG_SMS_LIST, _warningMessage)
+        DisableWaveHeightWarning = True
+      EndIf
+
+      NetworkLatency = PingIP("ftp.mtri.org",750)
+
+      Print("Starting Data Upload...")
+      UploadNDBC = 1
+      UploadGLOS = 1
+      UploadMTU = 1
+      UploadGLRC = 1
+
+      Include "CPU:BuildXML.CR1x"
+      Delay(0,2,Sec)
+
+      Sprintf(UploadFileName, "%s_%06d.xml", StationNumber, _record)
+      Sprintf(UploadImageFileName, "%s_%06d.jpg", StationNumber, _record)
+      Print("Upload Ready...uploading.")
+      'Note: use "/" between dirs AND files
+      If NOT(DebugMode) Then
+        UploadNDBC = FTPClient ("comms.ndbc.noaa.gov","umich","fgYjGtSprVN5","USR:Upload.xml",StationNumber & "_" & UploadFileName,2)
+        IIF(UploadNDBC = -1, "NDBC uploaded...", "***NDBC did not upload")
+        UploadGLOS = FTPClient ("ftp.glos.us","uglos_ftp","goblue","USR:Upload.xml",StationNumber & "/" & UploadFileName,2)
+        IIF(UploadGLOS = -1, "GLOS uploaded...", "***GLOS did not upload")
+        UploadMTU = FTPClient ("ftp.mtri.org","uglos","ugl0sData","USR:Upload.xml",UploadFileName,2)
+        IIF(UploadMTU = -1, "MTU uploaded...", "***MTU did not upload")
+        UploadGLRC = FTPClient ("melpc.sabu.mtu.edu","uglos","ugl0sData","USR:Upload.xml",UploadFileName,2)
+        IIF(UploadGLRC = -1, "GLRC uploaded...", "***GLRC did not upload")
+      Else
+        'UploadMTU = FTPClient ("ftp.mtri.org","uglos","ugl0sData","USR:Upload.xml",UploadFileName,2)
+        UploadGLRC = FTPClient ("melpc.sabu.mtu.edu","uglos","ugl0sData","USR:Upload.xml",UploadFileName,2)
+        IIF(UploadGLRC = -1, "GLRC uploaded...", "***GLRC did not upload")
+      EndIf
+      Print("Data upload complete.")
+
+      '================D I A G N O S T I C  S E C T I O N===================
+      CellularRSRP = Settings.CellRSRP
+      CellularRSRQ = Settings.CellRSRQ
+      IPAddress = IPInfo(2,0) 'get the IP address of the modem's interface to the wide open internet
+      Sprintf(SkippedScans, "%d,%d %d %d %d", Status.SkippedScan, Status.SkippedSlowScan(1), Status.SkippedSlowScan(2), Status.SkippedSlowScan(3), Status.SkippedSlowScan(4))
+      Dim _messageSystem As String * 48 = ""
+      Dim _messageCell As String * 48 = ""
+      Dim _messageComms As String * 48 = ""
+      Dim _messagePosition As String * 48 = ""
+      Dim _messageIWS As String * 48 = ""
+      Sprintf(_messageSystem, "%.2fV %dm %dH", PanelVoltage, DriftDistance, Hour)
+      Sprintf(_messageCell, "Cell=(%d,%d)", CellularRSRP, CellularRSRQ)
+      Sprintf(_messageComms, "Uploads(N,G,M+)=%s,%s,%s%s", IIF(UploadNDBC = -1, "Y","N"), IIF(UploadGLOS = -1, "Y","N"), IIF(UploadMTU = -1, "Y","N"), IIF(UploadImageGLRC = -1, "+","-"))
+      Sprintf(_messagePosition, "GPS=%s", IIF(GMXStatus = 4, "ok", "UNLOCKED"))
+      'Sprintf(_messageIWS, "Tilt=%.0f MaxAcc=(%.2f,%.2f,%.2f)", MaxTilt, maxAccX, maxAccY, maxAccZ)
+      Sprintf(_messageIWS, "Hs=%.2f", WaveHeight)
+      Sprintf(DiagString, "%s %s %s %s %s", _messageSystem, _messageCell, _messageComms, _messagePosition, _messageIWS)
+
+      If TimeIntoInterval(0,1,Hr) Then
+        DiagEmailResult = Email(DIAG_EMAIL_LIST,":",DiagString)
+        print(DiagString)
+        're-enable the wave height warning every hour
+        DisableWaveHeightWarning = false
+      EndIf
+      '=====================================================================
+      'TODO
+      'if there are six consequetive upload failures on all three channels then assume comms are lost and do a soft reboot
+
+
+      'Email message sent to notify buoy has drifted outside watch circle
+      Dim _LocationMessage As String * 512 = "not set"
+      Sprintf(_LocationMessage, "Current Location:%s%s%d meters and %.0f degrees from permitted location%s%s%s%s", CRLF,CRLF,DriftDistance,DirftDirection,CRLF,CRLF,LocationLink,CRLF,CRLF,GPSCoordinate)
+      Print(_LocationMessage)
+
+
+      If (DriftDistance > DriftTolerance) AND NOT(DebugMode) Then
+        _driftCounter = _driftCounter + 1
+
+        If _driftCounter > 6 Then
+          WarningEmailResult = Email(DIAG_EMAIL_LIST, "Drift Warning", _LocationMessage)
+          SMS(DIAG_SMS_LIST, _LocationMessage, "ADRIFT!")
+
+        EndIf
+
+      Else
+        If _driftCounter <> 0 Then
+          WarningEmailResult = EmailSend("smtp.gmail.com:587", DIAG_EMAIL_LIST,"glrcbuoys@mtu.edu",StationNumber & ": Cancel Warning", StationNumber & ": Cancel Warning" & CHR(13)&CHR(10) & _
+          " The station has moved inside its watch circle."& CHR(13)&CHR(10) & _LocationMessage,"","glrcbuoys@mtu.edu", SMTP_PASSWORD,EmailResult)
+        EndIf
+        _driftCounter = 0
+      EndIf
+
+      IPAddress = IPInfo(1,0) 'get the IP address of the modem's interface to the wide open internet
+      Print("Exiting Upload Sequence")
+    EndIf
+  NextScan
+  EndSequence
+
+  ' Slow Sequence 2
+  '=================== M E T G I L L S E Q U E N C E =======================
+  SlowSequence
+  Scan(MET_INTERVAL,sec, 1, 0)
+    If NOT IN_STARTUP Then
+
+      If MET = ENABLED Then
+        SDI12Recorder(_GMX501(1),GMX501_PORT,GMX501_ADDR,"M!",1,0,-1)
+        SDI12Recorder(_GMX501(6),GMX501_PORT,GMX501_ADDR,"M1!",1,0,-1)
+        SDI12Recorder(_GMX501(15),GMX501_PORT,GMX501_ADDR,"M4!",1,0,-1)
+        SDI12Recorder(_GMX501(21),GMX501_PORT,GMX501_ADDR,"M5!",1,0,-1)
+        Move(GMX501(1),9,_GMX501(1),9)
+        Move(GMX501(10),9,_GMX501(11),9)
+        Move(GMX501(19),5,_GMX501(21),5)
+
+        If (GMXStatus = 4) Then 'GPS fixed
+          LatitudeMinutes *= MINUTES_PER_DEGREE
+          LongitudeMinutes *= MINUTES_PER_DEGREE
+          Latitude = LatitudeDegrees + LatitudeMinutes
+          Longitude = LongitudeDegrees + LongitudeMinutes
+          GPSLock = true
+        Else
+          Move(GMX501(19),5,NAN,1) 'replace 999 99 with nulls
+          Latitude = NAN : Longitude = NAN
+          GPSLock = false
+          WindSpeed = NAN
+          WindDirection = NAN
+        EndIf
+        If (WindSpeed > 999.0) Then WindSpeed = NAN
+        If (WindChill = 999) Then WindChill = AirTemperature
+        If (HeatIndex = 999) Then HeatIndex = AirTemperature
+      EndIf
+
+      BarometricPressure += _elevationCorrection
+
+      CallTable(METTable)
+
+      Sprintf(GPSCoordinate,  "%f6N, %f6W", Latitude, Longitude)
+      Sprintf(LocationLink, "http://maps.google.com/maps/?q=%.6fN,%.6fW", Latitude, ABS(Longitude))
+
+      Dim _x1 As Float = 0
+      Dim _y1 As Float = 0
+      Dim _x2 As Float = 0
+      Dim _y2 As Float = 0
+      _x1 = PermittedLongitude
+      _y1 = PermittedLatitude
+      _x2 = Longitude
+      _y2 = Latitude
+
+      If (GPSLock) Then
+        DirftDirection = ATN2((_y2-_y1)*_lat2mMult,-(_x2-_x1)*_lon2mMult)*180/PI
+        DirftDirection = 450 - DirftDirection
+        If DirftDirection >= 360 Then DirftDirection = DirftDirection - 360
+        DriftDistance = SQR(((_x2-_x1)*_lon2mMult)^2 + ((_y2-_y1)*_lat2mMult)^2)
+      Else
+        DriftDistance = 0
+      EndIf
+
+    EndIf
+  NextScan
+  EndSequence
+
+  ' Slow Sequence 3
+  '================= ADCP EXO MiniCO2 TS210 S E Q U E N C E ================
+  SlowSequence
+  Scan(SONDE_INTERVAL,min, 1, 0)
+    If NOT IN_STARTUP Then
+
+      If SONDE = ENABLED Then
+        Print("Starting Wet Sequnce")
+        'MET = DISABLED ' disable reading of the Gill while the sonde is using the SDI-12 interface
+
+        If HAS_SONDE Then
+          SW12(SONDE_POWER, On)
+          EXO3SInfo = ""
+          MET = DISABLED ' disable reading of the Gill while the sonde is using the SDI-12 interface
+          Timer(MINICO2_STARTUP_TIMER, Sec, TIMER_NEW)
+          miniCO2StartupTimer = 0
+        End If
+
+        If HAS_ADCP Then
+
+          '------------------ ADCP Reader ------------------
+          Print("Starting ADCP data collection")
+          Call ADCPCollect
+          If ADCPDataReady Then 'this is # of bins + 1 PNORI + 1 PNORS NMEA0183 sentence
+
+            CallTable(ZCTable)  'Save Z-cell data in table
+            Print("ADCP data collection complete.")
+            ADCPDataReady = false
+          Else
+            Print("ADCP incomplete dataset returned from instrument.")
+          EndIf
+        Else
+          print("Station configured without ADCP. Skipped processing")
+        EndIf
+
+        '------------------ Process The String ------------------
+        If HAS_TSTRING Then
+          Include "CPU:TS210Processing.CR1x"
+          WaterTemperature = _tempStringTemp(1)
+          CallTable(TempStringTable)
+        Else
+          print("Station configured without temp string Skipped processing")
+          If HAS_ADCP Then WaterTemperature = ZCell_Temperature
+        EndIf
+
+        '--------------------------------------------------------
+        If HAS_SONDE Then
+          miniCO2StartupTimer = Timer(MINICO2_STARTUP_TIMER,Sec,TIMER_LAP)
+          Do While miniCO2StartupTimer <= 60 'wait 60 seconds for the sonde to boot
+            Delay(0,1,Sec)
+            miniCO2StartupTimer = Timer(MINICO2_STARTUP_TIMER,Sec,TIMER_LAP)
+          Loop
+
+
+          'after 60 seconds, initiate a measurment at the sonde
+          print("Initiating measurment on the sonde.")
+
+          SDI12Recorder(EXO3SInfo, EXO3S_PORT, EXO3S_ADDR, "I!", 1, 0, -1)
+          SDI12Recorder(EXO3SCommand, EXO3S_PORT, EXO3S_ADDR, "C!", 1, 0, -1)
+          'Move(EXO3S(1),16,_EXO3S(1),16)
+
+          '          'TODO actually extract the value of this wait tie from the results of the C! command above
+          '          print("Waiting 70 seconds for the sonde measurment to be ready.")
+          Delay(0,70,Sec) 'The sonde will have it's data avalable in 62 seconds
+
+          print("Getting data from the sonde")
+          SDI12Recorder(_EXO3S(1), EXO3S_PORT, EXO3S_ADDR, "D0!", 1, 0,-1)
+          SDI12Recorder(_EXO3S(5), EXO3S_PORT, EXO3S_ADDR, "D1!", 1, 0,-1)
+          SDI12Recorder(_EXO3S(9), EXO3S_PORT, EXO3S_ADDR, "D2!", 1, 0,-1)
+          SDI12Recorder(_EXO3S(13), EXO3S_PORT, EXO3S_ADDR, "D3!", 1, 0,-1)
+          Move(EXO3S(1),16,_EXO3S(1),16)
+
+          print("Waiting for the miniCO2 to stabilize.")
+          'if needed wait the remainder of 2 minutes for the miniCO2 to stabilize
+          miniCO2StartupTimer = Timer(MINICO2_STARTUP_TIMER,Sec,TIMER_LAP)
+          Do While miniCO2StartupTimer <= 120 '2 minutes time remaining for miniCO2 to stabilize
+            Delay(0,1,Sec)
+            miniCO2StartupTimer = Timer(MINICO2_STARTUP_TIMER,Sec,TIMER_LAP)
+          Loop
+
+          VoltSe (_MiniCO2(1),1,mV5000, 9,0,0,_60Hz, 1, 0) 'TDGP
+          VoltSe (_MiniCO2(2),1,mV5000,11,0,0,_60Hz, 1, 0) 'CO2 ppm
+          MiniCO2(1) = (((_MiniCO2(1) * 505.52)/1000) - 253.01)
+          MiniCO2(2) = (((_MiniCO2(2) * 408.08)/1000) - 17.57)
+
+          print("Finished with sonde and miniCO2.")
+          SW12(SONDE_POWER, Off)
+
+          MET = ENABLED
+
+          CallTable(SondeTable)
+        EndIf
+      EndIf
+    EndIf
+
+  NextScan
+  EndSequence
+
+  ' Slow Sequence 4
+  '====================== C A M E R A  S E Q U E N C E =====================
+  SlowSequence
+  Scan(CAMERA_INTERVAL,Min, 1, 0)
+    If NOT IN_STARTUP Then
+
+      If SolarRadiation > 5.0 Then
+
+        '==================>>>>> Camera Processing <<<<<=================
+        If CAMERA = ENABLED Then
+          SerialOpen (CAMERA_COM_PORT, CAMERA_BAUD_RATE, 3, 0, CAMERA_COM_PORT_BUFFER_SIZE)
+          SW12(CAMERA_POWER, On)
+          Print("Starting Camera sequence")
+          Delay(0,6,Sec)'3 secs minium time for camera power on
+          CameraEnabled(true)
+          Delay(0,6,Sec)'we enforce the resolution so well give it a few seconds to reset.
+        Else
+          CameraEnabled(false)
+        EndIf
+
+        print("Taking a picture")
+        If CAMERA = ENABLED Then
+          Call TakeAPicture
+        EndIf
+
+        CallTable(SerialCamera)
+        '================================================================
+
+        SW12(CAMERA_POWER, Off)
+        SerialClose(CAMERA_COM_PORT)
+
+        '==================^^^^^ and Image Uploads ^^^^^=================
+        'DiagEmail = EmailSend("smtp.gmail.com:587", "ckpinnow@mtu.edu","glrcbuoys@mtu.edu",StationNumber & " " & StationDescription, DiagString,"","glrcbuoys@mtu.edu",SMTP_PASSWORD,DiagEmailResult)
+
+        If CAMERA = ENABLED Then
+          Print("Uploading camera image")
+          'Note: use "/" between dirs AND files
+          If NOT(DebugMode) Then
+            ''' Do only one upload
+            '''UploadImageMTU = FTPClient ("ftp.mtri.org","uglos","ugl0sData","CRD:Image.jpg",UploadImageFileName,2,0,0,0,0,30000)
+            UploadImageGLRC = FTPClient ("melpc.sabu.mtu.edu","uglos","ugl0sData","CRD:Image.jpg",UploadImageFileName,2,0,0,0,0,60000)
+          Else
+            UploadImageGLRC = FTPClient ("melpc.sabu.mtu.edu","uglos","ugl0sData","CRD:Image.jpg",UploadImageFileName,2,0,0,0,0,60000)
+          EndIf
+
+          If UploadImageGLRC = -1 Then
+            print("Camera image uploaded " & UploadImageFileName & " " & ImageLength & " bytes.")
+          Else
+            print("Camera image failed to upload " & CameraStatus)
+          EndIf
+
+        EndIf
+        '================================================================
+      Else
+        Print("Its dark out - skip camera processing")
+      EndIf
+    EndIf
+  NextScan
+  EndSequence
+
+EndProg
+

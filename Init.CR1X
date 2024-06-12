@@ -1,0 +1,28 @@
+'TODO you will use a string formatter instead of this approach
+Const CRLF = CHR(13) & CHR(10)
+Const CR = CHR(13)
+Const TAB1 = CHR(9)
+Const TAB2 = CHR(9)&CHR(9)
+Const TAB3 = CHR(9)&CHR(9)&CHR(9)
+Const SPACE = CHR(32)
+Const PI As Float = 4*ATN(1)
+Const Off = 0
+Const On = 1
+Const ENABLED = true
+Const DISABLED = false
+
+Const MINUTES_PER_DEGREE = 1/1e6 '60/1e6
+
+Const SMTP_PASSWORD As String = "kmifzvitmigrjheu"
+
+'Const TYPE_LONG = 6
+'Const TYPE_FLOAT = 9
+'Const TYPE_STRING = 11
+'Const TYPE_BOOL = 28
+
+Const WARNING_EMAIL_LIST As String = "jameya@mtu.edu, hmhender@mtu.edu, ckpinnow@mtu.edu, glrctech@gmail.com, thavens@mtu.edu"
+Const WARNING_SMS_LIST As String = "9063707466@vtext.com, 5172568630@vtext.com, 2082513852@vtext.com, 2313608444@txt.att.net"
+Const DIAG_EMAIL_LIST As String = "ckpinnow@mtu.edu"
+Const DIAG_SMS_LIST As String = "9063707466@vtext.com"
+
+

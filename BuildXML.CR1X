@@ -1,0 +1,220 @@
+Dim _fileHandle As Long = 0
+Dim _printString As String * 1024 = ""
+
+'**************************************************************
+'XML formatter is for creating numeric tags. It returns a String and it's usage is as follows...:
+
+'XML(<variable>, <name of tag>, <Optional # of TAB indents (default 0)>, <Optional # of sig figs (default 3)>, <Optional add a CR LF (default true)>)
+
+'XML(METTable.WindSpeed, "wspd1", 3, 2, true)
+'will return
+'      <wspd1>9.12</wspd1>
+'
+'note end of line CR LF, the three TAB indents and one digit to the right of the decimal place
+'supported data types are Float and Long
+'For situations where the tag is not a "data" tag e.g.
+'      <message>
+'then just use a string formatter like this
+'Sprintf(_printString, "%s%s", TAB3, "<message>")
+'Sprintf(_printString, "%c%c%c%s" 9, 9, 9, "<message")
+'... both are equliviant and write the formatted string into the destination variable _printString
+'Constants like TAB3 are defined in Init.CR1X and you can add more (or take some away) if needed
+'**************************************************************
+
+_fileHandle = FileOpen ("USR:Upload.xml", "w", -1)
+'=========================== H E A D E R ===================================
+'TODO fix this to us AQ and aa string formtter
+Sprintf(_printString, "<?xml version=%c1.0%c encoding=%cISO-8859-1%c?>%s", 34, 34, 34, 34, CRLF) : FileWrite(_fileHandle, _printString, 0)
+Sprintf(_printString, "%s<message>%s", TAB1, CRLF) : FileWrite(_fileHandle, _printString, 0)
+Sprintf(_printString, "%s<station>%s</station>%s", TAB2, StationNumber, CRLF) : FileWrite(_fileHandle, _printString, 0)
+Sprintf(_printString, "%s<date>%s</date>%s", TAB2, _timeStamp, CRLF) : FileWrite(_fileHandle, _printString, 0)
+'Sprintf(_printString, "%s<record>%s</record>%s", TAB2, _record, CRLF) : FileWrite(_fileHandle, _printString, 0)
+'FileWrite(_fileHandle, XML(Status.ProgSignature,"version", 2, 0), 0)
+FileWrite(_fileHandle, XML(IIF(METTable.Longitude = NAN, 0.0, METTable.Longitude), "lon", 2, 6), 0)
+FileWrite(_fileHandle, XML(IIF(METTable.Latitude = NAN, 0.0, METTable.Latitude), "lat", 2, 6), 0)
+Sprintf(_printString, "%s<met>%s", TAB2, CRLF) : FileWrite(_fileHandle, _printString, 0)
+
+'========================== G M X 5 0 1 ====================================
+FileWrite (_fileHandle, XML(METTable.WindVector2, "wdir1", 3, 0), 0)
+FileWrite (_fileHandle, XML(METTable.WindSpeed, "wspd1", 3, 2), 0)
+FileWrite (_fileHandle, XML(METTable.AirTemperature, "atmp1", 3, 1), 0)
+FileWrite (_fileHandle, XML(METTable.RelativeHumidity, "rh1", 3, 0), 0)
+FileWrite (_fileHandle, XML(METTable.RelativeHumidity, "rrh", 3, 0), 0)
+FileWrite (_fileHandle, XML(METTable.Dewpoint, "dewpt1", 3, 1), 0)
+FileWrite (_fileHandle, XML(METTable.BarometricPressure, "baro1", 3, 0), 0)
+FileWrite (_fileHandle, XML(METTable.SolarRadiation, "srad1", 3, 0), 0)
+
+'TODO:
+'Find WindGust <gust1>
+
+'=========================== S V S 6 0 3 ===================================
+FileWrite (_fileHandle, XML(SVS603.WaveHeight, "wvhgt", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.WavePeriod, "dompd", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.MeanWaveDir, "mwdir", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.MaxWaveHeight, "maxwvhgt", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.HOneTen, "h10wvhgt", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.MaximumPeriod, "maxpd", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.a1, "a1", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.b1, "b1", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.a2, "a2", 3, 3), 0)
+FileWrite (_fileHandle, XML(SVS603.b2, "b2", 3, 3), 0)
+
+'======================= T E M P S T R I N G ===============================
+Dim _tsTemps(TS210_MAX_NUMBER_OF_NODES) As Float
+Dim _nodeTemp As String * 16 = ""
+Dim _nodeDepth As String * 16 = ""
+
+If HAS_TSTRING Then
+  GetRecord(_tsTemps, TempStringTable, 1)
+
+  FileWrite (_fileHandle, XML(_tsTemps(1), "wtmp1", 3, 2), 0)
+
+  Dim _i As Long
+  For _i = 2 To _numberOfTempStringNodes
+    Sprintf(_nodeTemp, "tp%03d", _i - 1)
+    FileWrite(_fileHandle, XML(_tsTemps(_i), _nodeTemp, 3, 2), 0)
+  Next _i
+  For _i = 2 To _numberOfTempStringNodes
+    Sprintf(_nodeDepth, "dp%03d", _i - 1)
+    FileWrite(_fileHandle, XML(TempStringDepths(_i - 1), _nodeDepth, 3, 2), 0)
+  Next _i
+EndIf
+
+'============================= A D C P =====================================
+'============================ E X O 3 S ====================================
+If HAS_SONDE Then
+  'send this parameter off in two XML tags because GLOS expects <SPCOND> and NDBC expects <COND>
+  FileWrite (_fileHandle, XML(SondeTable.Conductivity, "spcond", 3, 2), 0)
+  FileWrite (_fileHandle, XML(SondeTable.Conductivity, "cond", 3, 2), 0)
+
+  FileWrite (_fileHandle, XML(SondeTable.pH, "pH", 3, 2), 0)
+
+  FileWrite (_fileHandle, XML(SondeTable.fDOM, "fdom", 3, 2), 0)
+
+  'send this parameter off in two XML tags because GLOS expects <ysichlfru> and NDBC expects <clcon>
+  FileWrite (_fileHandle, XML(SondeTable.Chlorophyll, "ysichlfru", 3, 2), 0)
+  FileWrite (_fileHandle, XML(SondeTable.Chlorophyll_ugL, "clcon", 3, 2), 0)
+    
+  FileWrite (_fileHandle, XML(SondeTable.Phycocyanin, "ysibgarfu", 3, 2), 0)
+'TDGP
+'pCO2 
+EndIf
+'=========================== S Y S T E M ===================================
+FileWrite (_fileHandle, XML(ConcurrentTable.PanelVoltage, "vbat", 3, 2), 0)
+FileWrite (_fileHandle, XML(ConcurrentTable.PanelTemperature, "ptmp", 3, 1), 0)
+FileWrite (_fileHandle, XML(ConcurrentTable.BatteryTemperature, "battmp", 3, 1), 0)
+FileWrite (_fileHandle, XML(ConcurrentTable.DriftDistance, "drift", 3, 0), 0)
+
+
+'=========================== F O O T E R ===================================
+FileWrite (_fileHandle, CHR(9)&CHR(9)&"</met>"&CHR(13)&CHR(10), 0)
+FileWrite (_fileHandle, CHR(9)&"</message>"&CHR(13)&CHR(10), 0)
+FileClose (_fileHandle)
+
+
+'XML writer for reference....
+
+''MET data ***************************************************************
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wdir1>"& SamXML(37) &"</wdir1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wspd1>"& SamXML(32) &"</wspd1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<gust1>"& SamXML(34) &"</gust1>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wdir2>"& SamXML(40) &"</wdir2>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wspd2>"& SamXML(35) &"</wspd2>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<gust2>"& SamXML(34) &"</gust2>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wdir3>"& SamXML(64) &"</wdir3>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wspd3>"& SamXML(62) &"</wspd3>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wdir4>"& AvgXML(7) &"</wdir4>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wspd4>"& SamXML(32) &"</wspd4>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wdir5>"& AvgXML(5) &"</wdir5>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wspd5>"& SamXML(36) &"</wspd5>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<iwsheading>"& AvgXML(19) &"</iwsheading>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<iwsheadingvct>"& AvgXML(61) &"</iwsheadingvct>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<zcellheading>"& ZCellXML(3) &"</zcellheading>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<lufftheading>"& SamXML(46) &"</lufftheading>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<atmp1>"& SamXML(1) &"</atmp1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<wtmp1>"& AvgXML(12) &"</wtmp1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<rrh>"& SamXML(10) &"</rrh>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<rh1>"& SamXML(10) &"</rh1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<dewpt1>"& SamXML(5) &"</dewpt1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<baro1>"& SamXML(28) &"</baro1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<srad1>"& SamXML(51) &"</srad1>"&CHR(13)&CHR(10), 0)
+''duplicate XML tag for srad2. This is what GLOS is parsing 7/6/18.
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<par1>"& AvgXML(15) &"</par1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<srad2>"& AvgXML(15) &"</srad2>"&CHR(13)&CHR(10), 0)
+''If (WaveHeight <= 2.1336) Then
+'
+'
+''28,29,30 3-vectors
+''31 ID
+'Sprintf(_PrintString, "%###.8Lf", IIF(AvgXML(56) = NAN, 0.0, AvgXML(56)))
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<gpslatN>"& _PrintString &"</gpslatN>"&CHR(13)&CHR(10), 0)
+'Sprintf(_PrintString, "%###.8Lf", IIF(AvgXML(57) = NAN, 0.0, AvgXML(57)))
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<gpslonW>"& _PrintString &"</gpslonW>"&CHR(13)&CHR(10), 0)
+'Sprintf(_PrintString, "%###.1Lf", IIF(AvgXML(58) = NAN, 0.0, AvgXML(58)))
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<gpsheading>"& _PrintString &"</gpsheading>"&CHR(13)&CHR(10), 0)
+'
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<cellstrength>"& AvgXML(59) &"</cellstrength>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<cellquality>"& AvgXML(60) &"</cellquality>"&CHR(13)&CHR(10), 0)
+'
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<vbat>"& AvgXML(1) &"</vbat>"&CHR(13)&CHR(10), 0)
+'
+'
+''Data *******************************************************************
+''*** TODO *** figure out what this fm64 thing means and check that it is correct for this station
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<fm64iii>820</fm64iii>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<fm64xx>99</fm64xx>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<fm64k1>7</fm64k1>"&CHR(13)&CHR(10), 0)
+'FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<fm64k2>0</fm64k2>"&CHR(13)&CHR(10), 0)
+'
+''Water depth data from the FiveMinAvg table ******************************
+''*** TODO *** verify t-string node depths these should be updated to reflect nexsens string, not RST string 0444s
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<dp010>" & TempDepth(10) & "</dp010>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<tp010>"& AvgXML(60) &"</tp010>"&CHR(13)&CHR(10), 0)
+'
+'
+''Lufft met data from the Lufft table ************************************
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<Tair_act>"& SamXML(1) &"</Tair_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<Tair_avg>"& SamXML(4) &"</Tair_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<Tdew_act>"& SamXML(5) &"</Tdew_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<Tdew_avg>"& SamXML(8) &"</Tdew_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<Wbulb_act>"& SamXML(9) &"</Wbulb_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RH_act>"& SamXML(10) &"</RH_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RH_avg>"& SamXML(13) &"</RH_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<AbsH_act>"& SamXML(14) &"</AbsH_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<AbsH_avg>"& SamXML(17) &"</AbsH_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<SpecEnth_act>"& SamXML(18) &"</SpecEnth_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<MixRat_act>"& SamXML(19) &"</MixRat_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<MixRat_avg>"& SamXML(22) &"</MixRat_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<AbsP_act>"& SamXML(23) &"</AbsP_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<AbsP_avg>"& SamXML(26) &"</AbsP_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<AirDen_act>"& SamXML(27) &"</AirDen_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RelP_act>"& SamXML(28) &"</RelP_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RelP_avg>"& SamXML(31) &"</RelP_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WS_act>"& SamXML(32) &"</WS_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WS_max>"& SamXML(34) &"</WS_max>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WS_avg>"& SamXML(35) &"</WS_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WS_vct>"& SamXML(36) &"</WS_vct>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WDir_act>"& SamXML(37) &"</WDir_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WDir_vct>"& SamXML(40) &"</WDir_vct>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WDirCorr_act>"& SamXML(41) &"</WDirCorr_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WChill_act>"& SamXML(43) &"</WChill_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WS_stdev>"& SamXML(44) &"</WS_stdev>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<WDir_stdev>"& SamXML(45) &"</WDir_stdev>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<Compass>"& SamXML(46) &"</Compass>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<PrecAmtDiff>"& SamXML(48) &"</PrecAmtDiff>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<PrecInt>"& SamXML(49) &"</PrecInt>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<PrecType>"& SamXML(50) &"</PrecType>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<SolRad_act>"& SamXML(51) &"</SolRad_act>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<SolRad_avg>"& SamXML(54) &"</SolRad_avg>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<LightEv_int>"& SamXML(56) &"</LightEv_int>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RMY_wspd>"& SamXML(62) &"</RMY_wspd>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RMY_wdir>"& SamXML(63) &"</RMY_wdir>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<RMY_wdircorr>"& SamXML(64) &"</RMY_wdircorr>"&CHR(13)&CHR(10), 0)'
+'
+''Z Cell data rom the Z Cell table ***************************************
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<dv030>31</dv030>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<vv030>"& zcavgn(30) &"</vv030>"&CHR(13)&CHR(10), 0)
+''FileWrite (_fileHandle, CHR(9)&CHR(9)&CHR(9)&"<uv030>"& zcavge(30) &"</uv030>"&CHR(13)&CHR(10), 0)
+'
+
+

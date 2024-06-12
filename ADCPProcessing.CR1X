@@ -1,0 +1,241 @@
+
+Const ADCP_MAXBINS As Long = 30  'number of ADCP bins/cells
+
+Public _ReportedNumberofBins As Long = 0
+Dim _CellSize As Float = 0
+Dim _Blanking As Float = 0
+Dim _ADCPReadTime As Float = 0
+Dim ADCPDataReady As Boolean = false
+
+Dim    ZCellHeaderData(15) As String
+Alias  ZCellHeaderData(1) = ZCell_Header
+Alias  ZCellHeaderData(2)= ZCell_Date
+Alias  ZCellHeaderData(3)= ZCell_Time
+Alias  ZCellHeaderData(4)= ZCell_ErrorCode
+Alias  ZCellHeaderData(5)= ZCell_StatusCode
+Alias  ZCellHeaderData(6)= ZCell_BattVoltage
+Alias  ZCellHeaderData(7)= ZCell_SoundSpeed
+Alias  ZCellHeaderData(8)= ZCell_Heading
+Alias  ZCellHeaderData(9)= ZCell_Pitch
+Alias  ZCellHeaderData(10)= ZCell_Roll
+Alias  ZCellHeaderData(11)= ZCell_Pressure
+Alias  ZCellHeaderData(12)= ZCell_Temperature
+Alias  ZCellHeaderData(13)= ZCell_AnalogIn1
+Alias  ZCellHeaderData(14)= ZCell_AnalogIn2
+Alias  ZCellHeaderData(15)= ZCell_HChecksum  '*hh
+Units ZCell_Date = MMDDYY
+Units ZCell_Time = hhmmss
+Units ZCell_BattVoltage = V
+Units ZCell_SoundSpeed = m/s
+Units ZCell_Heading = degrees
+Units ZCell_Pitch = degrees
+Units ZCell_Roll = degrees
+Units ZCell_Pressure = dBar
+Units ZCell_Temperature = C
+Units ZCell_HChecksum = 0xHH
+
+Dim ZCellSensorData(9) As String
+Alias ZCellSensorData(1)= ZCell_Sensor             'Identifier  ?$PNORI?
+Alias ZCellSensorData(2)= ZCell_InstrumentType    'Instrument type  0=Aquadopp, 2= Aquadopp Profiler 3=AWAC
+Alias ZCellSensorData(3)= ZCell_HeadID             'Head ID  aaannnn
+Alias ZCellSensorData(4)= ZCell_NumberOfBeams     'Number of beams  N
+Alias ZCellSensorData(5)= ZCell_NumberOfCells     'Number of cells  N
+Alias ZCellSensorData(6)= ZCell_Blanking           'Blanking (m)  dd.dd
+Alias ZCellSensorData(7)= ZCell_CellSize           'Cell size (m)  dd.dd
+Alias ZCellSensorData(8)= ZCell_CoordinateSystem  'Coordinate system  ENU=0, XYZ=1,Beam=2
+Alias ZCellSensorData(9) = ZCell_SChecksum
+'Units ZCell_InstrumentType
+'nits ZCell_HeadID = NNNNNN
+Units ZCell_Blanking = m
+Units ZCell_CellSize = m
+'Units ZCell_CoordinateSystem =
+
+'Nortek Z-Cell Measurement Fields
+Dim ZCellData(19) As String  'Data reported in this array for each cell/bin is below
+'Alias ZCellData(1)=
+'Alias ZCellData(2)=
+'Alias ZCellData(3)=
+Alias ZCellData(4)= CellNumber
+'Alias ZCellData(5)=
+'Alias ZCellData(6)=
+'Alias ZCellData(7)= 
+Alias ZCellData(8)= CellSpeed
+Alias ZCellData(9)= CellDirection
+'Alias ZCellData(10)= 
+Alias ZCellData(11)= CellAmplitude1
+Alias ZCellData(12)= CellAmplitude2
+Alias ZCellData(13)= CellAmplitude3
+'Alias ZCellData(14)= CellCorrelation1
+'Alias ZCellData(15)= CellCorrelation2
+'Alias ZCellData(16)= CellCorrelation3
+'Alias ZCellData(17)= 
+Units CellSpeed = m/s
+Units CellDirection = degrees
+Units CellAmplitude1 = Nnn
+Units CellAmplitude2 = Nnn
+Units CellAmplitude3 = Nnn
+
+'1 Identifier “$PNORC”
+'2 Date MMDDYY
+'3 Time hhmmss
+'4 Cell number N
+'5 Velocity 1 (m/s) dd.dd
+'6 Velocity 2 (m/s) dd.dd
+'7 Velocity 3 (m/s) dd.dd
+'8 Speed (m/s) dd.dd
+'9 Direction (deg) ddd.d
+'10 Amplitude Units ”C” counts
+'11 Amplitude 1 Nnn
+'12 Amplitude 2 Nnn
+'13 Amplitude 3 Nnn
+'14 Correlation 1 (%) Nn
+'15 Correlation 2 (%) Nn
+'16 Correlation 3 (%) Nn
+'17 CheckSum (Hex) *hh
+
+Dim Cellnum As Long
+Dim Speed(ADCP_MAXBINS) As Float
+Dim Direction(ADCP_MAXBINS) As Float
+Dim Depth(ADCP_MAXBINS) As Float
+'Dim Velocity1(ADCP_MAXBINS) As Float
+'Dim Velocity2(ADCP_MAXBINS) As Float
+'Dim Velocity3(ADCP_MAXBINS) As Float
+Dim Amplitude1(ADCP_MAXBINS) As Float
+Dim Amplitude2(ADCP_MAXBINS) As Float
+Dim Amplitude3(ADCP_MAXBINS) As Float
+'Dim Correlation1(ADCP_MAXBINS) As Float
+'Dim Correlation2(ADCP_MAXBINS) As Float
+'Dim Correlation3(ADCP_MAXBINS) As Float
+'Dim Correlation4(ADCP_MAXBINS) As Float
+Dim ADCPDisplayString(ADCP_MAXBINS) As String * 128
+
+Dim _ADCPLinesRead As Long = 0
+'Public _ADCPBytesReturned As Long = 0
+'Dim publicline(ADCP_MAXBINS+10) As String * 128
+Public PNORIString As String * 128
+Public PNORSString As String * 128
+Public ZCellString As String * 128
+Dim _PNORCArray(ADCP_MAXBINS) As String * 128
+
+DataTable (ZCTable,True,-1) 'Set table size to # of records (67), or -1 to autoallocate.
+  Sample (3,ZCellHeaderData(4),String)
+  Sample (5,ZCellHeaderData(8),String)                 'Nortek Header stuff like Heading, Pitch, Roll, Press, Temp
+  Sample (1,ZCell_Blanking, Float)
+  Sample (1,ZCell_CellSize, Float)
+  Sample (ADCP_MAXBINS,Speed(),Float)     'Sample Nortek Speed
+  Sample (ADCP_MAXBINS,Direction(),Float)          'Sample Nortek Direction
+  Sample (ADCP_MAXBINS,Depth(), Float)
+  Sample (ADCP_MAXBINS,Amplitude1(), Float)
+  Sample (ADCP_MAXBINS,Amplitude2(), Float)
+  Sample (ADCP_MAXBINS,Amplitude3(), Float)
+  'Sample (ADCP_MAXBINS,Correlation4(), Float)
+  Sample (ADCP_MAXBINS,ADCPDisplayString(), String)
+EndTable
+
+'Sub ADCPInit
+'  'Set up and initiate an Aquadopp acquisition for the first time
+'  'new ADCP code opens COM port at 115200 and in mode "0" not "16" - leaving ours at 9600
+'  
+'  '++++++++++++
+''  SerialOut(ADCP_COM_PORT, "@@@@@@", "", 0, 100)    'Send a soft break to the Aquadopp
+''  Delay(1, 200, mSec)                      'Delay to allow for up to NAK NAK NAK NAK NAK NAK
+''  SerialOut(ADCP_COM_PORT, "K1W%!Q", "", 0, 100)    'Send the command code key to the Aquadopp
+''  Delay(1, 200, mSec)                      'Delay to allow for ACK ACK
+''  SerialOut(ADCP_COM_PORT, "MC", "", 0, 100)        'Send a confirmation that any current data collection should stop
+''  Delay(1, 200, mSec)                      'Delay to allow for ACK ACK
+''  SerialFlush(ADCP_COM_PORT)                        'Flush aquadopp data from buffer
+''  SerialOut(ADCP_COM_PORT, "NM", "", 0, 100)        'Tell the Aquadopp to take a single self-timed ASCII-output measurement
+'  '++++++++++++
+'  Delay(1, 200, mSec)                      'Delay to allow for ACK ACK
+'EndSub
+
+Sub ADCPCollect
+  _ADCPLinesRead = 0
+  _ADCPReadTime = 0
+  Timer(ADCP_READ_TIMER,Sec,TIMER_NEW) 'set a timer to exit the read loop if ADCP read cannot be completed while timer expires
+  'While _ADCPLinesRead < (ADCP_MAXBINS + 2) AND _ADCPReadTime < 5 'seconds
+  While(SerialInChk(ADCP_COM_PORT))
+    '++++++++++++_ADCPBytesReturned = 0
+    'Grab a line from the serial port ending in a carriage return
+    SerialIn(ZCellString, ADCP_COM_PORT, 200, CHR(13), 128) '*** chr(36??)
+    'other idea - grab a line between the beginning and end char of a single line ($ and *)
+    'SerialInRecord (ADCP_COM_PORT,ZCellString,36,0,42,_ADCPBytesReturned,01)
+
+    If Len(ZCellString) > 5 Then 'if the string from the port has any length, try to interpret it as 1 of 3 NMEAs
+      If InStr(1,ZCellString,"PNORI",2) Then
+        PNORIString = ZCellString
+        SplitStr(ZCellSensorData(), ZCellString, ",", 9, 5)
+        _ReportedNumberofBins = ZCellSensorData(5) '# of cells configured on the instrument is specificed in position 5
+        _CellSize = ZCellSensorData(7) '6,7 has the bin size and blanking distance
+        _Blanking = ZCellSensorData(6) 'we assign these sensor vals to local variables so they are immediately available to code below
+      EndIf
+
+      'Parse lines into variables as they come in
+      If InStr(1,ZCellString,"PNORS",2) Then
+        PNORSString = ZCellString
+        'Process header string, 14 data fields (line 1)
+        SplitStr(ZCellHeaderData(), ZCellString, ",", 15, 5)
+        'ZCellHeaderData(14)=Left(ZCellHeaderData(14),1)
+      EndIf
+
+      If InStr(1,ZCellString,"PNORC",2) Then
+        '$PNORC,072002,043336,27,0.994,-1.203,0.005,1.561,140.4,C,16,16,15,,,*28
+        '1......2......3......4..5.....6......7.....8.....9.....1011.12.13...15
+
+        SplitStr(ZCellData(), ZCellString, ",", 17, 5)
+        Cellnum = ZCellData(4) ' the bin # in this PNORC string is found in position 4
+
+        'The n-th cell is centered at a vertical distance from the transducer equal to: Center of n'th cell = Blanking + n*cell size
+        'given blanking distance of 0.2 m and a cell size of 0.5 m. The center of the first
+        'cell (n=1) is thus located at 0.2 m + 1 * 0.5 m = 0.7 m from the instrument. The full extent of the
+        'first cell is from 0.2 to 1.2 m. Correspondingly, the center of the second cell is 0.2 m + 2 * 0.5 m =
+        '1.2 m and the full extent of the cell is from 0.7 to 1.7 m. Note that these numbers are projections
+        'along the vertical axis, the numbers along the beam axis are larger by a factor of 1/COS(theta)
+        Depth(Cellnum) = _Blanking + (Cellnum * _CellSize)
+
+        Sprintf(_PNORCArray(Cellnum), "%d: %s %d", Cellnum, ZCellString, Len(ZCellString))
+        'Velocity1(Cellnum) = ZCellData(5) : Velocity2(Cellnum) = ZCellData(6) : Velocity3(Cellnum) = ZCellData(7)
+        Speed(Cellnum) = ZCellData(8)
+        Direction(Cellnum) = ZCellData(9)
+        'Amplitude1(Cellnum) = ZCellData(12) : Amplitude2(Cellnum) = ZCellData(13) : Amplitude3(Cellnum) = ZCellData(14)
+        'amplitude4() - the ADCP returns a amp4 - what should I assign amp4 to?
+        Amplitude1(Cellnum) = ZCellData(11)
+        Amplitude2(Cellnum) = ZCellData(12)
+        Amplitude3(Cellnum) = ZCellData (13)
+
+        Sprintf(ADCPDisplayString(Cellnum),"n:%d, t:%3.1f, s:%3.2f, d:%4.1f, a1:%2.0f, a2:%2.0f, a3:%2.0f", _
+          Cellnum, _
+          Depth(Cellnum), _
+          Speed(Cellnum), _
+          Direction(Cellnum), _
+          Amplitude1(Cellnum), _
+          Amplitude2(Cellnum), _
+          Amplitude3(Cellnum))
+      EndIf
+
+      ZCellString = ""
+      _ADCPLinesRead = _ADCPLinesRead + 1
+    EndIf
+    _ADCPReadTime = Timer(ADCP_READ_TIMER,Sec,TIMER_LAP)
+    'exit read loop when # of lines = expected # of bins+2 (n pnorc sentences + 1 pnori + 1 pnors sentence)
+  Loop
+  
+  If _ADCPLinesRead = _ReportedNumberofBins + 2 Then
+    ADCPDataReady = true
+    SerialFlush(ADCP_COM_PORT)
+  Else
+    ADCPDataReady = false
+  EndIf
+  
+  '++++++++++++
+'  SerialOut(ADCP_COM_PORT, "@@@@@@", "", 0, 100)    'Send a soft break to the Aquadopp
+'  Delay(1, 200, mSec)                      'Delay to allow for up to NAK NAK NAK NAK NAK NAK
+'  SerialOut(ADCP_COM_PORT, "K1W%!Q", "", 0, 100)    'Send the command code key to the Aquadopp
+'  Delay(1, 200, mSec)                      'Delay to allow for ACK ACK
+'  SerialOut(ADCP_COM_PORT, "MC", "", 0, 100)        'Send a confirmation that any current data collection should stop
+'  Delay(1, 200, mSec)                      'Delay to allow for ACK ACK
+'  SerialFlush(ADCP_COM_PORT)                        'Flush aquadopp data from buffer
+'  SerialOut(ADCP_COM_PORT, "NM", "", 0, 100)        'Tell the Aquadopp to take a single self-timed ASCII-output measurement
+  '++++++++++++
+EndSub
+

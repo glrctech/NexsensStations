@@ -1,0 +1,493 @@
+
+'This modeule will introduce a couple Public variables
+Public CameraStatus As String * 64 = "Spinel 5MP serial camera CRBasic Driver (GLRC 2024 - ckp)"
+
+Dim cameraVersionString(11)          As String = ""           ' version data returned from camera
+'module level constants - other constants exist but they will be declared
+'in the vicinity of the code that uses them - usually a subroutine
+'use the camera model default baud of 115k
+'In CRBasic the port passed to SerialOpen must be a Const. There is not a clean
+'pass the camera port to this module with a parameter. If the camera must be
+'installed on a port different than ComRS232 is it suggested to move SerialOpen
+'out of the module into your main program. This avoids a module-level constant
+'gloming over a port that may be in use elsewhere in your program.
+Const CAMERA_SERIAL_DELAY As Long = 10
+Const CAMERA_GETIMG_DELAY As Long = 250
+Const CAMERA_TIMER_STOP = 1
+Const CAMERA_TIMER_NEW = 2
+Const CAMERA_TIMER_LAP = 4
+
+'cameraReadBuffer holds image data received from com port before saving to file
+
+'Buffer size, currently 196608 bytes, is not large enough to hold the entirely of the
+'largest possible image. It is noted that the logger appears to read out it's
+'UART, and perform file IO, in blocks (~255-511 bytes). The logger is capable of
+'tracking it's progress through successive calls to SerialInBlock() via internal
+'read & write pointers. Therefore a buffer as large as the expected image size
+'is not needed. This buffer can probably be made smaller too if the rest of the
+'program is memory constrained.
+
+'Command commands and responses are 4-byte, 2-byte, or 1 byte words.
+'Commands are represented as hex and defined as Const's in this program sequence
+'In camera documetation, example commands appear as hex-bytes and &H notation can be
+'used in CRBAsic to define them.
+'Const A As Long = &H56003105 Is 0x56 00 31 05
+'Const B As Long = &H04010019 Is 0x04 01 00 19
+'Const C As Long = &H11 Is 0x11'
+'Note that when transmitting a partial word e.g. a byte like 0x11, it is needed
+'to place your byte inside an empty word. So 0x11 should be transmitted with
+'a Long word like &H00000011. If 0x00FF are the fifth and sixth bytes of a message
+'they should be tramsmitted using the long word &H00FF0000
+'Camera documentation...:
+'     https://www.spinelelectronics.com/pdf/SC20MPB%20User%20Manual.pdf
+'     https://spinelelectronics.com/wp-content/uploads/SC50MPB-User-Manual.pdf
+
+'array of messages assigned by aspects of camera operation. To be used in
+'the camera table DataTable
+Dim camera_Message(12) As String * 128 'stores processed return messages from camera
+Alias camera_Message(1) = VersionCmd
+Alias camera_Message(2) = VersionString
+Alias camera_Message(3) = ResolutionCmd
+Alias camera_Message(4) = ResolutionCode
+Alias camera_Message(5) = CaptureCmd
+Alias camera_Message(6) = CaptureCode
+Alias camera_Message(7) = LengthCmd
+Alias camera_Message(8) = LengthReturned
+Alias camera_Message(9) = TransferMessage1
+Alias camera_Message(10) = TransferMessage2
+Alias camera_Message(11) = ResetCmd
+Alias camera_Message(12) = ResetCode
+
+DataTable(SerialCamera, CAMERA_UPDATE_MESSAGES_TABLE,-1)
+  DataInterval(0,0,Sec,1)
+  'CardOut(0,-1)
+  Sample(1,CameraStatus,String)
+  Sample(12,camera_Message,String)
+  Sample(1,camera_DriveReady, Long)
+  Sample(1,camera_ImageTmpFile, String)
+  Sample(1,camera_FileHandle, Long)
+  Sample(1,camera_ErrorCode, Long
+  '  Sample(1,GPSLat,IEEE8)
+  '  Sample(1,SatellitesInView,FP2)
+  '  Sample(1,IWSString,String)
+EndTable
+
+' Unused camera commands and camera responses. These could be needed later
+' Most likely, a baud rate change and the required reset command that follows
+' Set Baud Rate commands - the camera's default baud is 115200bps
+Const CAMERA_SET_BAUD1               = &H56003106      ' Set baud rate header
+Const CAMERA_SET_BAUD2               = &H04020008      ' Set baud header 2
+Const CAMERA_SET_BAUD3               = &HAEC80DA6      ' Set baud 115200
+'Const CAMERA_STOP_CAPTURE_CMD      = &H5600360103           ' stops image capture
+'Const CAMERA_SET_QUALITY_CMD   = &H560031050101120436   ' last byte is compression ratio high res
+'Const CAMERA_CHANGE_ADDRESS_CMD    = &H5600310504010006     ' (see camera docs. would cause module changes)
+'Const CAMERA_LIGHTS_ON_CMD         = &H5600850101           ' we have no lights to turn on, yet
+'Const CAMERA_LIGHT_OFF_CMD         = &H5600850100           ' we have no lights to turn off, yet
+
+' Unused camera responses
+Const CAMERA_RESET_RET                = &H76002600
+Const CAMERA_CAPTURE_IMAGE_RET       = &H7600360000
+Const CAMERA_GET_LENGTH_RET   = &H7600340004 ' additional 4 bytes of data (data/1024 = length in k)
+Const CAMERA_STOP_CAPTURE_RET        = &H7600360000
+Const CAMERA_SET_COMPRESSION_RET     = &H7600310000
+Const CAMERA_SET_RESOLUTION_RET      = &H7600310000
+Const CAMERA_SET_BAUD_RATE_RET       = &H7600310000
+' YY -> new address
+'Const CHANGE_ADDRESS_RET      = &H76 'YY 31 00 00
+'Const LIGHT_CNT_RET           = &H76008500
+'Const INCORRECT_CMD_RET       = &H6572726F72
+'Const BAUD_RATE_RET           = &H7600240000
+
+Public CAMERA_UPDATE_MESSAGES_TABLE As Boolean = True
+Dim camera_DriveReady As Long              ' check if the drive to write
+Dim camera_ImageTmpFile As String * 40     ' camera image file name
+Dim camera_FileHandle As Long                     ' camera file handle
+Dim camera_ErrorCode As Long = 0          ' Camera return error
+
+'***************************** SubRoutines *********************************
+
+'===========================================================================
+'Subroutine:   GetCameraVersion
+'===========================================================================
+Const CAMERA_GET_VERSION_CMD         = &H56001100      ' Get version command
+Const VER_BYTE_RET  = 4             ' number of bytes that should be returned
+Const VER_RET1      = &H76001100    'version number return for error checking
+'version strings returned by various cameras and their firmwares
+'&H0B505443
+'&H314D3320   'possibly version string from OPG-era cameras
+'&H324D3020    'version string returned by OPG/GLOS 22-23 cameras
+'&H312E3030   'possibly version string from OPG-era cameras
+'&H322E3035    'version string returned by OPG/GLOS 22-23 cameras
+
+Dim cameraVersionCode(1)                 As Long = 0
+Dim cameraVersionStringLength(1)     As Long = 0
+
+Sub GetCameraVersion
+  Dim num_byte   As Long              ' Number of bytes returned
+
+  SerialFlush(CAMERA_COM_PORT)                                'Flush camera_Buffers
+
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_GET_VERSION_CMD, 4)          'Send get version
+
+  Delay(0,100,mSec)
+  num_byte = SerialInBlock(CAMERA_COM_PORT,cameraVersionCode(1),4)   'Read from camera
+  SerialInBlock(CAMERA_COM_PORT,cameraVersionStringLength(1),1)   'Read from camera
+  SerialInBlock(CAMERA_COM_PORT,cameraVersionString,cameraVersionStringLength)   'Read from camera
+
+  ' Error check - number of bytes returned
+  If num_byte = VER_BYTE_RET Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(1),"0x%X", cameraVersionCode(1))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(1),"Get Ver return length unexpected. Got %d bytes, expected %d", num_byte, VER_BYTE_RET)
+  EndIf
+
+  ' Error check - correct header
+  If cameraVersionCode(1) = VER_RET1 Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(2),"%s", cameraVersionString)
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(2),"Get Ver return code unexpected. Got 0x%X, expected 0x%X", cameraVersionCode(1), VER_RET1)
+  EndIf
+
+EndSub
+
+'===========================================================================
+'Subroutine:   SetResolution
+'===========================================================================
+' Set Resolution Commands ' Either use RESHIGH or RESLOW not both.
+Const CAMERA_SET_RES1                = &H56003105      ' Set resolution cmd headers
+Const CAMERA_SET_RES2                = &H05010019
+Const CAMERA_SET_RESHIGH             = &HAA000000    ' Set resolution byte to 5MP
+Const CAMERA_SET_RESLOW              = &H66000000    ' Set resolution byte to 1920x1080
+Const CAMERA_CAPTURE_IMAGE_CMD       = &H56003601      ' Capture Image command (send as 5 bytes)
+Const CAMERA_GET_LENGTH_CMD   = &H56003401      ' Read image length (send as 5 bytes - 4 + &H00)
+
+' Resolution expected return
+Const RES_BYTE_RET   = 5                ' number of bytes returned by camera
+Const RES_RET1       = &H76003101
+Const RES_RET2       = &H00
+
+'Public   res_data(2)       As Long            ' resolution header returned from camera
+Dim cameraResolutionCode(2)                 As Long = 0
+
+Sub SetResolution
+  Dim num_byte   As Long              ' Number of bytes returned
+
+  SerialFlush(CAMERA_COM_PORT)                        ' flush camera_Buffers
+  ' Send set resolution command
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_SET_RES1,4)
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_SET_RES2,4)
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_SET_RESHIGH,1)        ' set to res byte to 1MP or 2MP
+
+  Delay(0,100,mSec)
+  num_byte = SerialInBlock(CAMERA_COM_PORT,cameraResolutionCode(1),5)    'read image resolution retunr
+
+  ' Error check - bytes returned
+  If num_byte = RES_BYTE_RET Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(3),"0x%X %X", cameraResolutionCode(1), cameraResolutionCode(2))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(3),"Set Res return length unexpected. Got %d bytes, expected %d", num_byte, RES_BYTE_RET)
+  EndIf
+
+  ' Error check - header returned
+  If cameraResolutionCode(1) = RES_RET1  Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(4),"0x%X %X", cameraResolutionCode(1), cameraResolutionCode(2))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(4),"Set Res return code unexpected. Got 0x%X %X, expected 0x%X %X", cameraResolutionCode(1), cameraResolutionCode(2), RES_RET1, RES_RET2)
+  EndIf
+
+  Delay(0,3,Sec)              ' Delay to ensure resolution is set in camera flash
+EndSub
+
+'===========================================================================
+'Subroutine:   CaptureImg
+'===========================================================================
+' Capture image expected return
+Const CAPTURE_RET1           = &H76003600
+Const CAPTURE_RET2           = &H00
+
+Const CAPTURE_BYTE_RET       = 5              ' expected number of bytes returned
+Dim   imageCaptureCode(2)            As Long          ' image capture return data
+
+Sub CaptureImage
+  Dim num_byte   As Long              ' Number of bytes returned
+
+  SerialFlush(CAMERA_COM_PORT)                            ' flush camera_Buffers
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_CAPTURE_IMAGE_CMD,5)     ' send capture command
+
+  Delay(0,3,Sec)
+  num_byte = SerialInBlock(CAMERA_COM_PORT,imageCaptureCode(1),5)  ' read image capture return
+
+  ' Error checking - number of bytes returned
+  If num_byte = CAPTURE_BYTE_RET Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(5),"0x%X %X", imageCaptureCode(1), imageCaptureCode(2))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(5),"Image Capture return length unexpected. Got %d bytes, expected %d", num_byte, CAPTURE_BYTE_RET)
+  EndIf
+
+  ' Error Checking - header returned
+  'If img_cap(1) = CAP_RET1 AND img_cap(2) = CAP_RET2 Then
+  If cameraResolutionCode(1) = RES_RET1  Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(6), "0x%X %X", imageCaptureCode(1), imageCaptureCode(2))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(6),"Image Capture return code unexpected. Got 0x%X %X, expected 0x%X %X", imageCaptureCode(1), imageCaptureCode(2), CAPTURE_RET1, CAPTURE_RET2)
+  EndIf
+
+EndSub
+
+'===========================================================================
+'Subroutine:   GetLength
+'===========================================================================
+Const LENGTH_RET1           = &H76003400    ' expected image length header
+Const LENGTH_BYTE_RET       = 5             ' expected number of bytes returned
+
+Public imageLength            As Long         ' image length returned
+Dim imageLengthCode(2)            As Long         ' image length header returned from camera
+
+Sub GetLength
+  Dim num_byte   As Long              ' Number of bytes returned
+  SerialFlush(CAMERA_COM_PORT)                              ' flush camera_Buffers
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_GET_LENGTH_CMD,4)   ' send image length command
+  SerialOutBlock(CAMERA_COM_PORT,&H00,1)                    ' 5th byte - read from buffer zero
+
+  Delay(0,100,mSec)
+  num_byte = SerialInBlock(CAMERA_COM_PORT,imageLengthCode(1),5)     ' image length header return
+  SerialInBlock(CAMERA_COM_PORT,imageLength,4)                ' image length return
+
+  ' Error checking - correct number of bytes
+  If num_byte = LENGTH_BYTE_RET Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(7),"0x%X %X", imageLengthCode(1), imageLengthCode(2))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(7),"Get Len return length unexpected. Got %d bytes, expected %d", num_byte, LENGTH_BYTE_RET)
+  EndIf
+
+  ' Error checking - correct header
+  If imageLengthCode(1) = LENGTH_RET1 Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(8),"Bytes: %d", imageLength)
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(8),"Get Len return code unexpected. Got 0x%X %X, expected 0x%X %X", imageLengthCode(1), imageLengthCode(2), LENGTH_RET1, CAPTURE_RET2)
+  EndIf
+EndSub
+
+
+'===========================================================================
+'Subroutine:   GetImageData
+'===========================================================================
+'helper function for GetImageData
+Sub SendReadCommand(_start As Long, _length As Long)
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_READ_IMG1,4) : Delay(0,10,mSec)
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_READ_IMG2,2) : Delay(0,10,mSec)
+  SerialOutBlock(CAMERA_COM_PORT,_start,4) : Delay(0,10,mSec)
+  SerialOutBlock(CAMERA_COM_PORT,_length,4) : Delay(0,10,mSec)
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_READ_IMG4,2) : Delay(0,10,mSec)
+EndSub
+
+' Read image data command '
+' SS -> Starting address - usually 00 00 00 00
+' LL -> LENGTH OF IMAGE DATA (HIGH BYTE, LOW BYTE) to send whole image use word from from GetLength() result
+'56 00 32 0C  1
+'00 0A        2
+'SS SS SS SS  3
+'LL LL LL LL  from GetLength result
+'00 FF        4
+Const CAMERA_READ_IMG1               = &H5600320C      ' Read image data header
+Const CAMERA_READ_IMG2               = &H0A000000          ' Read image data header 2 scpeifies the image buffer no. 0-5 (usually zero)
+Const CAMERA_READ_IMG3               = &H00000000 ' Start address - begin with zero then subsequently use endaddress from most recent readimage cmd
+Const CAMERA_READ_IMG4               = &H00FF0000          ' Read image tail
+
+Const IMG_HEADER1           = &H76003200      ' expected image header
+Const IMG_HEADER2           = &HFF
+Const IMG_HEADER_BYTE       = 5               ' expected number of header bytes
+Dim imageHeaderReturnCode(2)    As Long           ' variable to store image header, footer
+Dim imageFooterReturnCode(2)    As Long
+
+Sub GetImageData
+  Dim  header_Bytes         As Long = 0          ' number of header bytes returned
+  Dim  footer_Bytes         As Long = 0
+  Dim bytes_In           As Long = 0     ' number of image bytes read
+  Dim bytes_ToBeRead     As Long = 0
+  Dim camera_bytesRemaining   As Long = 0
+  Dim camera_bytesWritten        As Long = 0     'number of bytes successfully written to file
+  Dim camera_bytesUnWritten        As Long = 0
+  Dim _startAddress        As Long = 0
+  Dim _callsToSerialIn As Long = 0
+  Dim _callsToSerialCHK As Long = 0
+  Public CameraSerialTransferTime = 0
+  Units CameraSerialTransferTime=Seconds
+
+  camera_DriveReady = FileOpen("CRD","d",0)
+  FileClose(camera_DriveReady)   'Check to see if a drive to write the file exists
+
+  'TODO - figure out a way to check if the image (which we know the size of) will fit on the drive...
+  camera_ImageTmpFile = "CRD:_tmp.jpg"
+  camera_FileHandle = FileOpen(camera_ImageTmpFile,"wb",0)      ' open file
+
+  SerialFlush(CAMERA_COM_PORT)                            ' flush comport
+  ' Send read image data command. JPG data is situated between a 5-byte header and identical footer
+  '  0x76003200 0x00 |<--imageLength of jpg bytes-->| 0x76003200 0x00
+  ' ...a JPG starts with 0xFFD8 and ends with 0xFFD9, always
+  Sprintf(camera_Message(9), "(%d:%d). Begin X-fer. Expecting %d bytes (0x%X) to %s", _
+  camera_DriveReady, camera_FileHandle, imageLength, imageLength, camera_ImageTmpFile)
+
+  _startAddress = CAMERA_READ_IMG3
+  camera_bytesWritten = 0
+  camera_bytesUnWritten = 0
+  camera_bytesRemaining = imageLength
+  _callsToSerialIn = 0
+  _callsToSerialCHK = 0
+  CameraSerialTransferTime = 0
+  Timer(CAMERA_XFER_TIMER, Sec, CAMERA_TIMER_NEW)
+
+  SendReadCommand(_startAddress, imageLength)
+  Delay(0, CAMERA_GETIMG_DELAY, mSec)
+
+  header_Bytes = SerialInBlock(CAMERA_COM_PORT,imageHeaderReturnCode(1),5)    'swallow the 5 byte header
+  Do
+    bytes_ToBeRead = SerialInChk(CAMERA_COM_PORT)
+    _callsToSerialCHK += 1
+    Delay(0, CAMERA_SERIAL_DELAY, mSec)
+    If bytes_ToBeRead > 0 Then
+      _callsToSerialIn += 1
+      bytes_In = SerialInBlock(CAMERA_COM_PORT, cameraReadBuffer(1), bytes_ToBeRead)'SerialInChk(CAMERA_COM_PORT)
+
+      camera_bytesWritten = FileWrite(camera_FileHandle, cameraReadBuffer(1), bytes_In)
+      camera_bytesUnWritten += (bytes_In - camera_bytesWritten)
+      camera_bytesRemaining -= camera_bytesWritten
+      If camera_bytesRemaining <= 5 Then camera_bytesRemaining = 0
+
+    EndIf
+
+    camera_bytesWritten = 0
+    bytes_In = 0
+    CameraSerialTransferTime = Timer(CAMERA_XFER_TIMER,Sec,CAMERA_TIMER_LAP)
+  Loop Until camera_bytesRemaining <= 0 OR CameraSerialTransferTime > 85
+
+  footer_Bytes = SerialInBlock(CAMERA_COM_PORT,imageFooterReturnCode(1),5)        'swallow the 5 byte footer
+
+
+
+  FileClose(camera_FileHandle)                                                 ' close file
+  CameraSerialTransferTime = Timer(CAMERA_XFER_TIMER, Sec, CAMERA_TIMER_STOP)
+
+  Sprintf(CameraStatus, "%s file closed (%d bytes). (%d:%d)", _
+  camera_ImageTmpFile, FileSize(camera_ImageTmpFile), _
+  camera_DriveReady, camera_FileHandle)
+
+  Delay(0,500,mSec) 'this seems to be needed to allow flash memory to sync to the FileClose() just prior
+  
+  'TODO - there is a bug here. The JPG will be written with five extra bytes following the end of JPG
+  'marker which is 0xFFd9 .. the extra five bytes are the cameras response to it's Get Image command.  
+  FileManage("CRD:Image.jpg", 8) 'decimal 8 tells FileManage() to delete a file
+  Delay(0,250,mSec)
+  FileRename(camera_ImageTmpFile, "CRD:Image.jpg")
+
+  Sprintf(camera_Message(9), _
+  "Transfer ended after %3.1f secs. Head/Footer: 0x%X %X / 0x%X %X", _
+  CameraSerialTransferTime, _
+  imageHeaderReturnCode(1), imageHeaderReturnCode(2), imageFooterReturnCode(1), imageFooterReturnCode(2))
+
+  Sprintf(camera_Message(10), _
+  "%d/%d/%d bytes (Expected/Wrote/Remaining). %d bits / second.", _
+  imageLength, FileSize("CRD:Image.jpg"), camera_bytesRemaining, _
+  (8*imageLength/CameraSerialTransferTime))
+
+EndSub
+
+'===========================================================================
+'Subroutine:   ResetCamera
+'===========================================================================
+Const CAMERA_RESET_CMD               = &H56002600      ' Reset command
+Const RESET_BYTE_RET  = 4             ' number of bytes that should be returned
+' return for error checking
+Const RESET_RET1      = &H76002600
+
+Dim cameraResetCode(1)                 As Long = 0
+
+Sub ResetCamera
+  Dim num_byte   As Long              ' Number of bytes returned
+
+  SerialFlush(CAMERA_COM_PORT)                                'Flush camera_Buffers
+
+  SerialOutBlock(CAMERA_COM_PORT,CAMERA_RESET_CMD, 4)          'Send get version
+
+  Delay(0,3,Sec)
+  num_byte = SerialInBlock(CAMERA_COM_PORT,cameraResetCode(1),4)   'Read from camera
+
+  ' Error checking - number of bytes returned
+  If num_byte = RESET_BYTE_RET Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(11),"0x%X", cameraResetCode(1))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(11),"Reset return length unexpected. Got %d bytes, expected %d", num_byte, RESET_BYTE_RET)
+  EndIf
+
+  ' Error Checking - header returned
+  'If img_cap(1) = CAP_RET1 AND img_cap(2) = CAP_RET2 Then
+  If cameraResetCode(1) = RESET_RET1  Then
+    camera_ErrorCode = 0: Sprintf(camera_Message(12), "0x%X", cameraResetCode(1))
+  Else
+    camera_ErrorCode = 1: Sprintf(camera_Message(12),"Reset return code unexpected. Got 0x%X, expected 0x%X", cameraResetCode(1), RESET_RET1)
+  EndIf
+EndSub
+
+'===========================================================================
+'Subroutine:   SetBaudRate
+'===========================================================================
+'Const    BAUD_BYTE_RET  = 5             ' number of bytes that should be returned
+' possible version number return for error checking
+'Const    BAUD_RET1      = &H76001100
+'Const    BAUD_RET2      = &H0B505443
+
+'Sub SetBaudRate
+'
+'  SerialFlush(CAMERA_COM_PORT)                                'Flush camera_Buffers
+'
+'  SerialOutBlock(CAMERA_COM_PORT,&H56002403,4)
+'  SerialOutBlock(CAMERA_COM_PORT,&H010D, 2)
+'
+'  Delay(0,10,mSec)
+'  num_byte = SerialInBlock(CAMERA_COM_PORT,data_vers(1),5)   'Read from camera
+'
+'' Error check - number of bytes returned
+'  If num_byte = BAUD_BYTE_RET Then
+'    error = 0
+'  Else
+'    error = 1: Sprintf(camera_Message(1),"SetBaudRate return bytes unexpected. Got %s, expected %s", num_byte, BAUD_BYTE_RET)
+'  EndIf
+'
+'' Error check - correct header
+'  If data_vers(1) = VER_RET1 AND data_vers(2) = VER_RET2 Then
+'    error = 0
+'  Else
+'    error = 1: Sprintf(camera_Message(2),"SetBaudRate returned error ")
+'  EndIf
+'
+'EndSub
+
+'===========================================================================
+'Subroutine:   CameraEnabled
+'===========================================================================
+Sub CameraEnabled(enable As Boolean)
+
+  Dim _port As Boolean
+  Dim _arrayIndex
+  If enable Then
+    For _arrayIndex = 1 To ArrayLength(camera_Message)
+      camera_Message(_arrayIndex) = ""
+    Next _arrayIndex
+
+    _port = ComPortIsActive(CAMERA_COM_PORT)
+    If _port Then
+      SerialFlush(CAMERA_COM_PORT)
+      GetCameraVersion() : Delay(0,10,mSec)
+      SetResolution() : Delay(0,10,mSec)
+    Else
+      Sprintf(CameraStatus, "Camera warning: Camera serial port %d does not appear to be active.", CAMERA_COM_PORT)
+    EndIf
+
+  Else
+    SerialFlush(CAMERA_COM_PORT)
+    CAMERA_UPDATE_MESSAGES_TABLE = false
+  EndIf
+EndSub
+
+
+

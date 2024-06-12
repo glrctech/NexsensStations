@@ -1,0 +1,29 @@
+If HAS_TSTRING Then
+
+  Dim _j As Long = 1
+  Dim _k As Long = 1
+
+  Dim  _StringResponse(TS210_MAX_NUMBER_OF_NODES) As Long
+
+  'SerialFlush(TS210_PORT)
+  'Delay (1,100,mSec)
+
+  For _j = 1 To _numberOfTempStringNodes
+
+    ModbusMaster (_StringResponse(_j),TS210_PORT,TS210_BAUD,_j,4,_tempStringTemp(_j),7,1,2,100,2)
+    'ModbusMaster (_StringResponse(_j),ComC7,19200,_j,4,_tempStringNodeTemp(_j),7,1,2,500,2)
+    print("TS node " & _j & " responded with " & _StringResponse(_j) & " Temp=" & _tempStringTemp(_j))
+
+    If _StringResponse(_j) <> 0 Then
+      _tempStringTemp(_j) = 0
+    EndIf
+  Next _j
+
+  For _k = _numberOfTempStringNodes + 1 To TS210_MAX_NUMBER_OF_NODES
+    _tempStringTemp(_k) = 0
+  Next _k
+  
+  Move(TempStringTemp(1), _numberOfTempStringNodes, _tempStringTemp(1), _numberOfTempStringNodes)
+
+EndIf
+

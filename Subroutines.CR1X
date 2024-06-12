@@ -1,0 +1,111 @@
+'========================= S U B R O U T I N E S  ==========================
+
+'=======PRINT A MESSAGE TO THE RING BUFFER TABLE, LogMessages=======
+Sub Print(message As String * 256, Optional linenumber As Long = 0)
+  Dim _lineString As String * 16
+  Dim _m As Long = 0
+  For _m = BUOY_HISTORY_SIZE To 2 Step -1
+    BUOY(_m) = BUOY(_m - 1)
+  Next _m
+
+  Sprintf(_lineString, "Line: %d", linenumber)
+  Sprintf(BUOY(1), "%u-%u %02u:%02u:%02u   %s %s", Month, DOM, Hour, Minute, Second, message, IIF(linenumber <> 0, _lineString, ""))
+  CallTable(BuoyMessages)
+EndSub
+
+'=======JSON KEY VALUE PAIR FORMATTER=======
+Function JKV(name As String, number As Float, Optional separator As Boolean = false) As String * 256
+  Dim _key As String * 64
+  Dim _value As String * 64
+  Dim _pair As String * 128
+  Sprintf(_key,"%cvariable_name%c%c%c%s%c",34,34,58,34,name,34)
+  Sprintf(_value,"%cvalue%c%c%###.3Lf",34,34,58,number)
+  If separator Then
+    Sprintf(_pair, "%c%s%c%s%c%c",123,_key,44,_value,125,44)
+  Else
+    Sprintf(_pair, "%c%s%c%s%c",123,_key,44,_value,125)
+  EndIf
+  JKV = _pair
+EndFunction
+
+
+'============ THE XML FORMATTER ============
+Function XML(value As Float, name As String * 128, Optional indents As Long = 0, Optional sigfigs As Long = 3, Optional eol As Boolean = true) As String * 128
+  Dim _tabStops As String * 8 = ""
+  Dim _eol As String * 8 = ""
+  Dim _tag As String * 128 = ""
+  Dim _formatString As String * 64 = ""
+
+  If value = NAN Then value = 0.0
+
+  Sprintf(_formatString, "%%.%df", sigfigs)
+
+  Select Case indents
+  Case 0
+    _tabStops = ""
+  Case 1
+    _tabStops = TAB1
+  Case 2
+    _tabStops = TAB2
+  Case 3
+    _tabStops = TAB3
+  Case Else
+    _tabStops = ""
+  EndSelect
+
+  If eol = true Then
+    _eol = CRLF
+  Else
+    _eol = ""
+  EndIf
+
+  Sprintf(_tag, "%s<%s>" & _formatString & "</%s>%s", _tabStops, name, value, name, _eol)
+  XML = _tag
+EndFunction
+
+'============ADD QUOTES=====================
+Function AQ(_unquoted As String) As String * 256
+  Dim _quoted As String * 256
+  Sprintf(_quoted,"%c%s%c",34,_unquoted,34)
+  AQ = _quoted
+EndFunction
+
+'============SEND EMAIL MESSAGE=============
+Function Email(recipients As String * 256, subject As String * 256, body As String * 4096) As Long
+
+  Dim _returnCode As Long = 906
+  Dim _emailResult As String * 128
+
+  _returnCode = EmailSend("smtp.gmail.com:587", recipients,"glrcbuoys@mtu.edu",StationNumber & SPACE & subject, StationDescription & SPACE & body,"","glrcbuoys@mtu.edu", SMTP_PASSWORD, _emailResult)
+  print(_emailResult)
+  Email = _returnCode
+EndFunction
+
+'============SEND SMS TEXT==================
+Function SMS(recipients As String * 256, body As String * 4096, Optional messagetype As String * 16 = "") As Long
+
+  Dim _returnCode As Long = 906
+  Dim _smsResult As String * 128
+  Dim _messageType As String *16
+  _messageType = UpperCase(messagetype)
+
+  _returnCode = EmailSend("smtp.gmail.com:587", recipients,"glrcbuoys@mtu.edu",_messageType,StationNumber & SPACE & body,"","glrcbuoys@mtu.edu", SMTP_PASSWORD, _smsResult)
+  print(_smsResult)
+  SMS = _returnCode
+EndFunction
+
+'========TAKE A PIC AND STORE IT ON THE SD CARD=============================
+Sub TakeAPicture
+  'ResetCamera() : Delay(0,10,mSec)
+  GetCameraVersion() : Delay(0,10,mSec)
+  CaptureImage() : Delay(0,10,mSec)
+  GetLength() : Delay(0,10,mSec)
+
+  If imageLength > 0 Then
+    GetImageData() : Delay(0,10,mSec)
+  Else
+    ResetCamera() : Delay(0,10,mSec)
+  EndIf
+EndSub
+'===========================================================================
+
